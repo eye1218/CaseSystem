@@ -1,0 +1,36 @@
+from __future__ import annotations
+
+from typing import Annotated
+
+from fastapi import Depends, Request, Response
+from sqlalchemy.orm import Session
+
+from casesystem.auth import ActorContext, AuthService
+from casesystem.config import Settings, get_settings
+from casesystem.database import get_db
+
+
+def get_auth_service(
+    db: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AuthService:
+    return AuthService(db=db, settings=settings)
+
+
+def require_auth(
+    request: Request,
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> ActorContext:
+    actor = auth_service.authenticate_request(request)
+    request.state.actor = actor
+    return actor
+
+
+def require_csrf(
+    request: Request,
+    response: Response,
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> None:
+    del response
+    auth_service.validate_csrf(request)
+

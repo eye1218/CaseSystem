@@ -2,6 +2,11 @@
 
 这是基于 `docs/系统总览设计.md` 与 `docs/身份与权限模块.md` 实现的后端身份与权限模块 MVP。
 
+当前仓库已调整为前后端分目录：
+
+* `backend/`：Python API 服务
+* `frontend/`：前端目录，现阶段已接管原静态页面原型资源
+
 ## 功能范围
 
 * 用户登录、登出、改密
@@ -20,11 +25,23 @@
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e ".[dev]"
-uvicorn casesystem.main:app --reload
+uvicorn app.main:app --app-dir backend --reload
 ```
 
 ## 测试
 
 ```bash
 pytest
+```
+
+## 预览部署
+
+预览环境部署流程已固化，详见：
+
+- [docs/预览部署.md](/Volumes/data/workspace/python/CaseSystem/docs/预览部署.md)
+
+默认一键发布命令：
+
+```bash
+./scripts/deploy_preview.sh
 ```

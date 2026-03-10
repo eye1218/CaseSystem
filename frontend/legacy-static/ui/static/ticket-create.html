@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>创建工单 | CaseSystem</title>
+    <link rel="icon" href="/ui-assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/ui-assets/app.css" />
+  </head>
+  <body data-theme="dark">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-eyebrow">SOC 7x24</div>
+          <div class="brand-title">CaseSystem</div>
+          <div class="brand-meta">创建页强调来源约束：客户固定 CUSTOMER，内部手工默认 INTERNAL。</div>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-section-title">Core</div>
+          <a class="nav-link" href="/ui/tickets">工单中心</a>
+          <a class="nav-link" href="/ui/ticket-pool">工单池</a>
+          <a class="nav-link nav-link-active" href="/ui/tickets/new">创建工单</a>
+          <a class="nav-link" href="/ui/recycle-bin">回收站</a>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <div class="page-title">创建工单</div>
+            <div class="page-subtitle">所有角色都可创建工单，但来源由角色和创建方式决定，不作为自由编辑字段。</div>
+          </div>
+          <div class="toolbar">
+            <div class="role-chip">Preview Role <strong>All Roles</strong></div>
+            <button class="ghost-button" data-theme-toggle>Theme <strong data-theme-label>Dark</strong></button>
+            <a class="quiet-button" href="/ui/tickets">返回列表</a>
+          </div>
+        </header>
+
+        <section class="content">
+          <div class="hero">
+            <div class="hero-block">
+              <div class="hero-eyebrow">Create Ticket</div>
+              <h1 class="hero-title">录入表单按业务口径组织，不做问卷式弱化设计。</h1>
+              <p class="hero-copy">
+                当前创建页仅服务手工创建。API 来源不通过该页面配置；客户创建时来源固定为 CUSTOMER，内部人员手工创建默认 INTERNAL。
+              </p>
+            </div>
+          </div>
+
+          <div class="split">
+            <section class="form-card card">
+              <h2 class="section-title">工单录入</h2>
+              <div class="form-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr))">
+                <div class="field">
+                  <label for="creator-role">创建人角色</label>
+                  <select id="creator-role">
+                    <option value="ADMIN">ADMIN</option>
+                    <option value="T1">T1</option>
+                    <option value="T2">T2</option>
+                    <option value="T3">T3</option>
+                    <option value="CUSTOMER">CUSTOMER</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="ticket-source">来源</label>
+                  <select id="ticket-source">
+                    <option value="INTERNAL">INTERNAL</option>
+                    <option value="CUSTOMER">CUSTOMER</option>
+                  </select>
+                  <div class="field-help" data-source-helper></div>
+                </div>
+
+                <div class="field" style="grid-column: 1 / -1">
+                  <label for="ticket-title">标题</label>
+                  <input id="ticket-title" type="text" value="SOC 告警: 邮件钓鱼点击事件" />
+                </div>
+
+                <div class="field" style="grid-column: 1 / -1">
+                  <label for="ticket-description">描述</label>
+                  <textarea id="ticket-description">描述告警上下文、客户反馈和当前已知影响范围，便于后续响应与升级判断。</textarea>
+                </div>
+
+                <div class="field">
+                  <label for="ticket-category">分类</label>
+                  <select id="ticket-category">
+                    <option>安全事件</option>
+                    <option>系统故障</option>
+                    <option>服务请求</option>
+                    <option>告警事件</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="ticket-priority">优先级</label>
+                  <select id="ticket-priority">
+                    <option>P1</option>
+                    <option>P2</option>
+                    <option>P3</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label for="ticket-risk">风险分</label>
+                  <input id="ticket-risk" type="number" value="88" min="0" max="100" />
+                </div>
+                <div class="field">
+                  <label for="ticket-assignee">指派对象 / 池子</label>
+                  <select id="ticket-assignee">
+                    <option>不立即指派</option>
+                    <option>王晨 (T2)</option>
+                    <option>T1_POOL</option>
+                    <option>T2_POOL</option>
+                    <option>T3_POOL</option>
+                  </select>
+                </div>
+
+                <div class="field" style="grid-column: 1 / -1">
+                  <label for="ticket-context">关联上下文 / 附件说明</label>
+                  <textarea id="ticket-context">可补充告警来源、资产编号、原始事件摘要与附件说明。</textarea>
+                </div>
+              </div>
+
+              <div class="button-row" style="margin-top: 20px">
+                <button class="primary-button">提交工单</button>
+                <button class="ghost-button">保存草稿</button>
+              </div>
+            </section>
+
+            <section class="panel card">
+              <h2 class="section-title">创建规则说明</h2>
+              <div class="stack">
+                <div class="status-note">所有角色用户都可以创建工单，但来源不是自由设计字段。</div>
+                <div>
+                  <div class="meta-item-label">客户创建</div>
+                  <div class="meta-item-value">来源固定为 CUSTOMER，避免前端允许误改来源。</div>
+                </div>
+                <div>
+                  <div class="meta-item-label">内部手工创建</div>
+                  <div class="meta-item-value">来源默认使用 INTERNAL，降低录入歧义。</div>
+                </div>
+                <div>
+                  <div class="meta-item-label">API 创建</div>
+                  <div class="meta-item-value">来源为 API，但不通过当前创建页配置。</div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/ui-assets/app.js"></script>
+  </body>
+</html>

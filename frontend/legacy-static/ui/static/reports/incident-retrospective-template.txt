@@ -1,0 +1,11 @@
+CaseSystem Retrospective Template
+=================================
+
+1. Incident Summary
+2. Detection Source
+3. Timeline
+4. Response Actions
+5. Escalation Notes
+6. Customer Communication
+7. Root Cause
+8. Improvement Items

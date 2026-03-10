@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>工单池 | CaseSystem</title>
+    <link rel="icon" href="/ui-assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/ui-assets/app.css" />
+  </head>
+  <body data-theme="dark">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-eyebrow">SOC 7x24</div>
+          <div class="brand-title">CaseSystem</div>
+          <div class="brand-meta">工单池页面强调池子流转、升级到池子与指定人升级的差异。</div>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-section-title">Core</div>
+          <a class="nav-link" href="/ui/tickets">工单中心</a>
+          <a class="nav-link nav-link-active" href="/ui/ticket-pool">工单池</a>
+          <a class="nav-link" href="/ui/tickets/new">创建工单</a>
+          <a class="nav-link" href="/ui/recycle-bin">回收站</a>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <div class="page-title">工单池</div>
+            <div class="page-subtitle">升级到池子不需要确认；升级给指定人则需要目标确认人确认。</div>
+          </div>
+          <div class="toolbar">
+            <div class="role-chip">Active Role <strong>T2</strong></div>
+            <button class="ghost-button" data-theme-toggle>Theme <strong data-theme-label>Dark</strong></button>
+          </div>
+        </header>
+
+        <section class="content">
+          <div class="hero">
+            <div class="hero-block">
+              <div class="hero-eyebrow">Ticket Pool</div>
+              <h1 class="hero-title">责任归属在这里汇总，但内部操作不因为归属被锁死。</h1>
+              <p class="hero-copy">
+                页面同时展示池子领取、指定分配、升级申请和确认流程。当前阶段唯一固化的默认升级规则是 T1_POOL 未指定具体人时升级到 T2_POOL。
+              </p>
+            </div>
+          </div>
+
+          <div class="board-grid">
+            <section class="board-column card">
+              <h2 class="section-title">T1_POOL</h2>
+              <div class="board-card">
+                <strong>#100205 邮件钓鱼初判</strong>
+                <div class="muted">状态：待响应 · 未指定人</div>
+                <div class="button-row">
+                  <button class="quiet-button">领取</button>
+                  <button class="quiet-button">升级到 T2_POOL</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="board-column card">
+              <h2 class="section-title">T2_POOL</h2>
+              <div class="board-card">
+                <strong>#100177 夜班值守待领取工单</strong>
+                <div class="muted">状态：待响应 · 升级到池子立即生效</div>
+                <div class="button-row">
+                  <button class="quiet-button">领取</button>
+                  <button class="quiet-button">指定分配</button>
+                </div>
+              </div>
+              <div class="board-card">
+                <strong>#100182 横向移动升级待确认</strong>
+                <div class="muted">状态：处理中 · 指定人升级等待目标确认</div>
+                <div class="button-row">
+                  <button class="quiet-button">查看升级记录</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="board-column card">
+              <h2 class="section-title">T3_POOL</h2>
+              <div class="board-card">
+                <strong>#100144 域控告警联动</strong>
+                <div class="muted">状态：处理中 · 等待专家接入</div>
+                <div class="button-row">
+                  <button class="quiet-button">领取</button>
+                  <button class="quiet-button">指定专家</button>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/ui-assets/app.js"></script>
+  </body>
+</html>

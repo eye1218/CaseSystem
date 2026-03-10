@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>回收站 | CaseSystem</title>
+    <link rel="icon" href="/ui-assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/ui-assets/app.css" />
+  </head>
+  <body data-theme="dark">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-eyebrow">SOC 7x24</div>
+          <div class="brand-title">CaseSystem</div>
+          <div class="brand-meta">回收站仅管理员可见，当前阶段只支持软删除工单恢复，不主动设计彻底删除入口。</div>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-section-title">Core</div>
+          <a class="nav-link" href="/ui/tickets">工单中心</a>
+          <a class="nav-link" href="/ui/ticket-pool">工单池</a>
+          <a class="nav-link" href="/ui/tickets/new">创建工单</a>
+          <a class="nav-link nav-link-active" href="/ui/recycle-bin">回收站</a>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <div class="page-title">回收站</div>
+            <div class="page-subtitle">仅管理员可见，用于查看软删除工单并恢复，不开放默认彻底删除操作。</div>
+          </div>
+          <div class="toolbar">
+            <div class="role-chip">Active Role <strong>ADMIN</strong></div>
+            <button class="ghost-button" data-theme-toggle>Theme <strong data-theme-label>Dark</strong></button>
+          </div>
+        </header>
+
+        <section class="content">
+          <div class="split">
+            <section class="table-card card">
+              <h2 class="section-title">已软删除工单</h2>
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>标题 / 分类</th>
+                    <th>删除前状态</th>
+                    <th>优先级</th>
+                    <th>删除时间</th>
+                    <th>删除人</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="table-id">#100111</td>
+                    <td><div class="table-title"><strong>历史钓鱼告警归档工单</strong><span class="muted">安全事件</span></div></td>
+                    <td><span class="status-chip status-closed">已关闭</span></td>
+                    <td><span class="priority-chip">P3</span></td>
+                    <td>03/09 10:20</td>
+                    <td>Admin</td>
+                    <td>
+                      <div class="button-row">
+                        <button
+                          class="quiet-button"
+                          data-bin-preview
+                          data-ticket-id="100111"
+                          data-ticket-title="历史钓鱼告警归档工单"
+                          data-deleted-at="2026-03-09 10:20"
+                          data-deleted-by="Admin"
+                          data-deleted-reason="重复历史样本，转入回收站等待确认是否恢复"
+                        >
+                          预览
+                        </button>
+                        <button class="primary-button" data-restore-ticket="100111">恢复</button>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="table-id">#100088</td>
+                    <td><div class="table-title"><strong>客户测试单</strong><span class="muted">服务请求</span></div></td>
+                    <td><span class="status-chip status-resolved">已处置</span></td>
+                    <td><span class="priority-chip">P4</span></td>
+                    <td>03/08 17:32</td>
+                    <td>Admin</td>
+                    <td>
+                      <div class="button-row">
+                        <button
+                          class="quiet-button"
+                          data-bin-preview
+                          data-ticket-id="100088"
+                          data-ticket-title="客户测试单"
+                          data-deleted-at="2026-03-08 17:32"
+                          data-deleted-by="Admin"
+                          data-deleted-reason="测试数据归档"
+                        >
+                          预览
+                        </button>
+                        <button class="primary-button" data-restore-ticket="100088">恢复</button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+
+            <aside class="sidebar-card card" id="bin-preview">
+              <h2 class="section-title" data-bin-title>选择回收站工单</h2>
+              <div class="stack" data-bin-body>
+                <div class="muted">点击左侧工单的“预览”，查看删除前摘要与恢复入口。</div>
+              </div>
+            </aside>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="ui-toast"></div>
+    <script src="/ui-assets/app.js"></script>
+  </body>
+</html>

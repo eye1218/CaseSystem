@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>工单中心 | CaseSystem</title>
+    <link rel="icon" href="/ui-assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/ui-assets/app.css" />
+  </head>
+  <body data-theme="dark">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-eyebrow">SOC 7x24</div>
+          <div class="brand-title">CaseSystem</div>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-section-title">Core</div>
+          <a class="nav-link nav-link-active" href="/ui/tickets">工单中心</a>
+          <a class="nav-link" href="/ui/ticket-pool">工单池</a>
+          <a class="nav-link" href="/ui/tickets/new">创建工单</a>
+          <a class="nav-link" href="/ui/recycle-bin">回收站</a>
+          <div class="nav-link-muted">工作台 <span class="nav-badge">Soon</span></div>
+          <div class="nav-link-muted">SLA 监控</div>
+          <div class="nav-link-muted">通知中心</div>
+          <div class="nav-link-muted">知识库</div>
+          <div class="nav-link-muted">报告</div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <div class="page-title">工单列表</div>
+          </div>
+          <div class="toolbar">
+            <div class="role-chip">Active Role <strong>T2</strong></div>
+            <div class="toolbar-chip">Language <strong>中文 / EN</strong></div>
+            <button class="ghost-button" data-theme-toggle>Theme <strong data-theme-label>Dark</strong></button>
+            <a class="primary-button" href="/ui/tickets/new">创建工单</a>
+          </div>
+        </header>
+
+        <section class="content">
+          <div class="metric-grid">
+            <div class="metric-card card">
+              <div class="metric-label">可见工单</div>
+              <div class="metric-value" data-filter-count>5 / 5</div>
+              <div class="metric-meta">当前列表结果 / 总工单数</div>
+            </div>
+            <div class="metric-card card">
+              <div class="metric-label">待响应</div>
+              <div class="metric-value">1</div>
+              <div class="metric-meta">当前仍处于等待响应流转</div>
+            </div>
+            <div class="metric-card card">
+              <div class="metric-label">超时中</div>
+              <div class="metric-value">1</div>
+              <div class="metric-meta">需要重点盯防的工单</div>
+            </div>
+            <div class="metric-card card">
+              <div class="metric-label">已处置 / 已关闭</div>
+              <div class="metric-value">2</div>
+              <div class="metric-meta">用于收口闭环与回顾</div>
+            </div>
+          </div>
+
+          <div class="table-layout">
+            <section class="filter-panel card ticket-filter-panel">
+              <h2 class="section-title">筛选面板</h2>
+              <div class="filter-stack">
+                <div class="field">
+                  <label for="ticket-id-search">工单 ID 搜索</label>
+                  <input id="ticket-id-search" data-filter-input type="text" placeholder="例如 100182" />
+                </div>
+
+                <div class="field">
+                  <label for="filter-category">分类</label>
+                  <select id="filter-category" data-filter-input>
+                    <option value="">全部分类</option>
+                    <option value="安全事件">安全事件</option>
+                    <option value="系统故障">系统故障</option>
+                    <option value="服务请求">服务请求</option>
+                    <option value="告警事件">告警事件</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label for="filter-priority">优先级</label>
+                  <select id="filter-priority" data-filter-input>
+                    <option value="">全部优先级</option>
+                    <option value="P1">P1</option>
+                    <option value="P2">P2</option>
+                    <option value="P3">P3</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label for="filter-status">工单状态</label>
+                  <select id="filter-status" data-filter-input>
+                    <option value="">全部状态</option>
+                    <option value="WAITING_RESPONSE">待响应</option>
+                    <option value="IN_PROGRESS">处理中</option>
+                    <option value="RESPONSE_TIMEOUT">响应超时</option>
+                    <option value="RESOLUTION_TIMEOUT">处置超时</option>
+                    <option value="RESOLVED">已处置</option>
+                    <option value="CLOSED">已关闭</option>
+                  </select>
+                </div>
+
+                <div class="field-inline ticket-date-range">
+                  <div class="field">
+                    <label for="filter-from-date">创建时间起</label>
+                    <input id="filter-from-date" data-filter-input type="date" />
+                  </div>
+                  <div class="field">
+                    <label for="filter-to-date">创建时间止</label>
+                    <input id="filter-to-date" data-filter-input type="date" />
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="table-card card">
+              <div class="toolbar-row" style="justify-content: space-between; margin-bottom: 16px">
+                <div class="chip-row">
+                  <span class="legend-chip">固定表头</span>
+                  <span class="legend-chip">保存视图</span>
+                  <span class="legend-chip">列管理</span>
+                </div>
+                <div class="button-row">
+                  <button class="quiet-button">批量操作</button>
+                  <button class="quiet-button">保存视图</button>
+                </div>
+              </div>
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>
+                      <button class="table-sort" data-sort-key="id" type="button">
+                        <span>ID</span>
+                        <span class="sort-indicator" data-sort-indicator>↕</span>
+                      </button>
+                    </th>
+                    <th>标题</th>
+                    <th>分类</th>
+                    <th>
+                      <button class="table-sort" data-sort-key="priority" type="button">
+                        <span>优先级</span>
+                        <span class="sort-indicator" data-sort-indicator>↕</span>
+                      </button>
+                    </th>
+                    <th>
+                      <button class="table-sort" data-sort-key="riskScore" type="button">
+                        <span>风险</span>
+                        <span class="sort-indicator" data-sort-indicator>↕</span>
+                      </button>
+                    </th>
+                    <th>主状态</th>
+                    <th>子状态</th>
+                    <th>当前处理人</th>
+                    <th>当前池子</th>
+                    <th>
+                      <button class="table-sort" data-sort-key="createdAt" type="button">
+                        <span>创建时间</span>
+                        <span class="sort-indicator" data-sort-indicator>↕</span>
+                      </button>
+                    </th>
+                    <th>
+                      <button class="table-sort" data-sort-key="updatedAt" type="button">
+                        <span>更新时间</span>
+                        <span class="sort-indicator" data-sort-indicator>↕</span>
+                      </button>
+                    </th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody data-ticket-table></tbody>
+              </table>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/ui-assets/app.js"></script>
+  </body>
+</html>

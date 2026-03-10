@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>工单详情 | CaseSystem</title>
+    <link rel="icon" href="/ui-assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/ui-assets/app.css" />
+  </head>
+  <body data-theme="dark" data-active-role="T2">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-eyebrow">SOC 7x24</div>
+          <div class="brand-title">CaseSystem</div>
+          <div class="brand-meta">工单详情页是当前阶段的核心页面，右侧知识库预览使用非模态抽屉。</div>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-section-title">Core</div>
+          <a class="nav-link" href="/ui/tickets">工单中心</a>
+          <a class="nav-link" href="/ui/ticket-pool">工单池</a>
+          <a class="nav-link" href="/ui/tickets/new">创建工单</a>
+          <a class="nav-link" href="/ui/recycle-bin">回收站</a>
+          <div class="nav-link-muted">SLA 监控</div>
+          <div class="nav-link-muted">通知中心</div>
+          <div class="nav-link-muted">审计</div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <div class="page-title" data-page-ticket-id>工单详情</div>
+            <div class="page-subtitle" data-page-subtitle>
+              内部用户可见状态并可按业务状态执行动作；升级确认 / 拒绝仅对目标确认人开放。
+            </div>
+          </div>
+          <div class="toolbar">
+            <div class="role-chip">Active Role <strong data-active-role-label>T2</strong></div>
+            <div class="toolbar-chip">Language <strong>中文 / EN</strong></div>
+            <button class="ghost-button" data-theme-toggle>Theme <strong data-theme-label>Dark</strong></button>
+            <a class="quiet-button" href="/ui/tickets">返回列表</a>
+          </div>
+        </header>
+
+        <section class="content drawer-aware" data-ticket-detail-view>
+          <div class="hero">
+            <div class="hero-block">
+              <div class="hero-eyebrow">Ticket Detail</div>
+              <h1 class="hero-title" data-hero-title>SOC 告警升级: 可疑横向移动行为</h1>
+              <div class="hero-summary-row">
+                <div class="chip-row" data-hero-chips></div>
+                <div class="hero-sla-strip">
+                  <div class="hero-sla-card">
+                    <div class="hero-sla-topline">
+                      <div class="hero-sla-label">响应 SLA</div>
+                      <div class="hero-sla-value" data-hero-response-sla-value>已达成</div>
+                    </div>
+                    <div class="hero-sla-meta" data-hero-response-sla-meta>08:00 前已响应</div>
+                  </div>
+                  <div class="hero-sla-card">
+                    <div class="hero-sla-topline">
+                      <div class="hero-sla-label">处置 SLA</div>
+                      <div class="hero-sla-value" data-hero-resolution-sla-value>02:41:12</div>
+                    </div>
+                    <div class="hero-sla-meta" data-hero-resolution-sla-meta>剩余时长</div>
+                  </div>
+                </div>
+              </div>
+              <p class="hero-copy" data-hero-copy>
+                该页面强调主状态和子状态分离、SLA 时效压迫感、评论协作留痕，以及知识库 Markdown 预览与报告下载的分离处理。
+              </p>
+            </div>
+            <div class="hero-actions" data-hero-actions>
+              <button class="primary-button">处置完成</button>
+              <button class="ghost-button">升级申请</button>
+              <button class="ghost-button">编辑</button>
+            </div>
+          </div>
+
+          <div class="detail-shell">
+            <div class="detail-main">
+              <section class="detail-card card">
+                <h2 class="section-title">工单基础信息</h2>
+                <div class="detail-meta-grid">
+                  <div>
+                    <div class="meta-item-label">分类</div>
+                    <div class="meta-item-value" data-meta-category>安全事件</div>
+                  </div>
+                  <div>
+                    <div class="meta-item-label">来源</div>
+                    <div class="meta-item-value" data-meta-source>API</div>
+                  </div>
+                  <div>
+                    <div class="meta-item-label">当前处理人</div>
+                    <div class="meta-item-value" data-meta-assignee>王晨</div>
+                  </div>
+                  <div>
+                    <div class="meta-item-label">当前池子</div>
+                    <div class="meta-item-value muted" data-meta-pool>未在池中</div>
+                  </div>
+                  <div>
+                    <div class="meta-item-label">创建时间</div>
+                    <div class="meta-item-value" data-meta-created-at>2026-03-09 07:24</div>
+                  </div>
+                  <div>
+                    <div class="meta-item-label">更新时间</div>
+                    <div class="meta-item-value" data-meta-updated-at>2026-03-09 09:12</div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="comment-card card">
+                <h2 class="section-title">评论协作区</h2>
+                <div class="comment-list" data-comment-list>
+                  <div class="comment-item">
+                    <div class="comment-head">
+                      <div><strong>王晨</strong> <span class="comment-role">T2</span></div>
+                      <div class="muted">09:12</div>
+                    </div>
+                    <p class="comment-copy">已完成主机隔离与横向移动初判，等待指定专家确认升级。若需要，可直接参考右侧知识库作业卡。</p>
+                  </div>
+                  <div class="comment-item">
+                    <div class="comment-head">
+                      <div><strong>系统</strong> <span class="comment-role">System</span></div>
+                      <div class="muted">09:05</div>
+                    </div>
+                    <p class="comment-copy">子状态变更为“升级待确认”，目标确认人：赵一凡。</p>
+                  </div>
+                  <div class="comment-item">
+                    <div class="comment-head">
+                      <div><strong>客户 A</strong> <span class="comment-role">Customer</span></div>
+                      <div class="muted">08:56</div>
+                    </div>
+                    <p class="comment-copy">请优先确认当前办公区资产是否存在扩散风险，我们需要 30 分钟内获得初步结论。</p>
+                  </div>
+                </div>
+              </section>
+
+              <section class="timeline-card card">
+                <h2 class="section-title">操作日志时间轴</h2>
+                <div class="timeline" data-timeline-list>
+                  <div class="timeline-item">
+                    <h4>升级申请</h4>
+                    <p>09:05 · 王晨发起升级给指定人，目标确认人赵一凡。</p>
+                  </div>
+                  <div class="timeline-item">
+                    <h4>已响应</h4>
+                    <p>07:58 · 记录 responded_at，工单进入处理中阶段。</p>
+                  </div>
+                  <div class="timeline-item">
+                    <h4>工单创建</h4>
+                    <p>07:24 · API 创建工单，初始主状态 WAITING_RESPONSE，子状态 NONE。</p>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <aside class="detail-aside">
+              <section class="sidebar-card card">
+                <h2 class="section-title">知识库卡片</h2>
+                <div class="stack" data-knowledge-list>
+                  <div class="knowledge-card">
+                    <div class="knowledge-title">横向移动初判与隔离指引</div>
+                    <div class="muted">Playbook · 更新于 2026-03-09 01:32</div>
+                    <div class="muted">适配“安全事件”分类，包含研判优先级、隔离顺序与后续升级判断。</div>
+                    <button
+                      class="knowledge-preview"
+                      data-knowledge-file="lateral-movement.md"
+                      data-knowledge-title="横向移动初判与隔离指引"
+                      data-knowledge-type="Playbook"
+                      data-knowledge-updated="2026-03-09 01:32"
+                    >
+                      预览 Markdown
+                    </button>
+                  </div>
+                  <div class="knowledge-card">
+                    <div class="knowledge-title">钓鱼邮件处置作业卡</div>
+                    <div class="muted">Runbook · 更新于 2026-03-08 21:05</div>
+                    <div class="muted">适合关联邮件投递、主机告警和客户反馈联动处置时快速参考。</div>
+                    <button
+                      class="knowledge-preview"
+                      data-knowledge-file="phishing-playbook.md"
+                      data-knowledge-title="钓鱼邮件处置作业卡"
+                      data-knowledge-type="Runbook"
+                      data-knowledge-updated="2026-03-08 21:05"
+                    >
+                      预览 Markdown
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="sidebar-card card">
+                <h2 class="section-title">报告卡片</h2>
+                <div class="stack" data-report-list>
+                  <div class="report-card">
+                    <div class="report-title">横向移动事件关闭报告</div>
+                    <div class="muted">Closure Report · 最新版</div>
+                    <a class="download-link" href="/ui-assets/reports/lateral-movement-closure.txt" download>下载报告文件</a>
+                  </div>
+                  <div class="report-card">
+                    <div class="report-title">事件复盘模板</div>
+                    <div class="muted">Template · Markdown Export</div>
+                    <a class="download-link" href="/ui-assets/reports/incident-retrospective-template.txt" download>下载模板</a>
+                  </div>
+                </div>
+              </section>
+
+              <section class="sidebar-card card">
+                <h2 class="section-title">外部上下文摘要</h2>
+                <div class="stack" data-context-list>
+                  <div><span class="meta-item-label">规则名</span><div class="meta-item-value">Lateral Movement Suspected</div></div>
+                  <div><span class="meta-item-label">资产</span><div class="meta-item-value">HOST-SH-29 / 10.16.3.42</div></div>
+                  <div><span class="meta-item-label">SIM 研判</span><div class="meta-item-value">研判建议优先隔离登录源主机，再检查相邻办公网资产。</div></div>
+                </div>
+              </section>
+            </aside>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <aside class="drawer" id="knowledge-drawer">
+      <div class="drawer-head">
+        <div class="toolbar-row" style="justify-content: space-between">
+          <div>
+            <h2 class="drawer-title" data-drawer-title>知识预览</h2>
+            <div class="muted" data-drawer-meta></div>
+          </div>
+          <button class="ghost-button" data-close-drawer>关闭</button>
+        </div>
+      </div>
+      <div class="drawer-body" data-drawer-body></div>
+      <div class="drawer-foot">
+        <div class="toolbar-row" style="justify-content: space-between">
+          <div class="muted">非模态抽屉，无全屏遮罩；顶栏和原页面可继续点击与滚动。</div>
+          <a class="quiet-button" href="/ui/tickets">保持当前上下文</a>
+        </div>
+      </div>
+    </aside>
+
+    <div class="toast" id="ui-toast"></div>
+    <script src="/ui-assets/app.js"></script>
+  </body>
+</html>

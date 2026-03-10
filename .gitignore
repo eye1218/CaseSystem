@@ -1,3 +1,11 @@
+# Node
+node_modules/
+.npm-cache/
+dist/
+.eslintcache
+.next/
+
+# Python
 .venv/
 __pycache__/
 .pytest_cache/
@@ -7,6 +15,11 @@ build/
 *.pyc
 *.pyo
 *.pyd
+
+# Database
 *.sqlite3
 *.db
 casesystem.db
+
+# OS
+.DS_Store

@@ -38,6 +38,9 @@ export default function AppHeader() {
     if (location.pathname.startsWith("/tickets/")) {
       return "nav.tickets";
     }
+    if (location.pathname.startsWith("/configuration/")) {
+      return "nav.configuration";
+    }
     return routeTitleMap[location.pathname] ?? "dashboard.title";
   }, [location.pathname]);
 

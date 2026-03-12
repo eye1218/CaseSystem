@@ -50,8 +50,9 @@ def test_ticket_detail_hides_internal_activity_for_customer(client):
     payload = response.json()
 
     assert payload["ticket"]["id"] == 100181
-    assert payload["knowledge_articles"]
+    assert payload["related_knowledge"] == []
     assert payload["reports"]
+    assert "report_templates" in payload
     assert all(item["visibility"] == "PUBLIC" for item in payload["activity_feed"])
 
 

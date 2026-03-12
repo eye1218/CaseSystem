@@ -1,11 +1,18 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import MainLayout from "../components/MainLayout";
+import RequireInternalKnowledge from "../components/RequireInternalKnowledge";
 import LoginPage from "../pages/LoginPage";
+import ConfigurationPage from "../pages/ConfigurationPage";
+import KnowledgeDetailPage from "../pages/KnowledgeDetailPage";
+import KnowledgeEditorPage from "../pages/KnowledgeEditorPage";
+import KnowledgeListPage from "../pages/KnowledgeListPage";
+import ReportsPage from "../pages/ReportsPage";
+import ReportTemplatesPage from "../pages/ReportTemplatesPage";
 import TicketCreatePage from "../pages/TicketCreatePage";
-import TicketListPage from "../pages/TicketListPage";
 import TicketDetailPage from "../pages/TicketDetailPage";
 import PlaceholderPage from "../pages/PlaceholderPage";
+import TicketListPage from "../pages/TicketListPage";
 
 export const router = createBrowserRouter([
   {
@@ -46,11 +53,39 @@ export const router = createBrowserRouter([
       },
       {
         path: "knowledge",
-        element: <PlaceholderPage titleKey="nav.knowledge" description="知识库模块后续接入 Markdown 与搜索能力。" />
+        element: (
+          <RequireInternalKnowledge>
+            <KnowledgeListPage />
+          </RequireInternalKnowledge>
+        )
+      },
+      {
+        path: "knowledge/new",
+        element: (
+          <RequireInternalKnowledge>
+            <KnowledgeEditorPage />
+          </RequireInternalKnowledge>
+        )
+      },
+      {
+        path: "knowledge/:id",
+        element: (
+          <RequireInternalKnowledge>
+            <KnowledgeDetailPage />
+          </RequireInternalKnowledge>
+        )
+      },
+      {
+        path: "knowledge/:id/edit",
+        element: (
+          <RequireInternalKnowledge>
+            <KnowledgeEditorPage />
+          </RequireInternalKnowledge>
+        )
       },
       {
         path: "reports",
-        element: <PlaceholderPage titleKey="nav.reports" description="报告模块当前仅在工单详情侧边区域提供下载入口。" />
+        element: <ReportsPage />
       },
       {
         path: "kpi",
@@ -58,7 +93,11 @@ export const router = createBrowserRouter([
       },
       {
         path: "configuration",
-        element: <PlaceholderPage titleKey="nav.configuration" description="配置中心保留入口，后续统一建设。" />
+        element: <ConfigurationPage />
+      },
+      {
+        path: "configuration/report-templates",
+        element: <ReportTemplatesPage />
       },
       {
         path: "users",

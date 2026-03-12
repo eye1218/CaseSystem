@@ -8,9 +8,12 @@ from sqlalchemy.orm import Session
 
 from app.auth import ActorContext
 from app.enums import RoleCode, TicketMainStatus, TicketPriority, TicketSubStatus
+from app.knowledge import list_related_articles_for_ticket_detail
 from app.models import Ticket, TicketAction, TicketComment
+from app.reporting import list_reports_for_ticket_detail, list_templates_for_ticket_detail
 from app.security import utcnow
-from app.ticket_detail_assets import ALERT_LIBRARY, CONTEXT_LIBRARY, KNOWLEDGE_LIBRARY, REPORT_LIBRARY
+from app.ticket_categories import TICKET_CATEGORY_NAMES
+from app.ticket_detail_assets import ALERT_LIBRARY, CONTEXT_LIBRARY
 
 
 class TicketOperationError(Exception):
@@ -20,13 +23,7 @@ class TicketOperationError(Exception):
         self.detail = detail
 
 
-CATEGORY_NAMES = {
-    "intrusion": "入侵检测",
-    "network": "网络攻击",
-    "data": "数据安全",
-    "endpoint": "终端安全",
-    "phishing": "网络钓鱼",
-}
+CATEGORY_NAMES = TICKET_CATEGORY_NAMES
 
 POOL_CODES = {"T1_POOL", "T2_POOL", "T3_POOL"}
 
@@ -543,17 +540,6 @@ def _permission_scope(actor: ActorContext) -> dict:
     }
 
 
-def _knowledge_articles(ticket: Ticket) -> list[dict]:
-    return KNOWLEDGE_LIBRARY.get(ticket.category_id, [])
-
-
-def _reports(ticket: Ticket) -> list[dict]:
-    reports = []
-    for item in REPORT_LIBRARY.get(ticket.category_id, []):
-        reports.append({**item, "download_path": f"/api/v1/tickets/{ticket.id}/reports/{item['id']}/download"})
-    return reports
-
-
 def _raw_alerts(ticket: Ticket) -> list[dict]:
     return ALERT_LIBRARY.get(ticket.source, [])
 
@@ -624,8 +610,11 @@ def build_ticket_detail(db: Session, actor: ActorContext, ticket: Ticket) -> dic
         "ticket": ticket,
         "available_actions": _available_actions(ticket, actor),
         "activity_feed": _activity_feed(db, actor, ticket.id),
-        "knowledge_articles": _knowledge_articles(ticket),
-        "reports": _reports(ticket),
+        "related_knowledge": list_related_articles_for_ticket_detail(db, actor, category_id=ticket.category_id),
+        "report_templates": list_templates_for_ticket_detail(
+            db, actor, ticket_category_id=ticket.category_id
+        ),
+        "reports": list_reports_for_ticket_detail(db, actor, ticket_id=ticket.id),
         "raw_alerts": _raw_alerts(ticket),
         "siem_context_markdown": _context_markdown(ticket),
         "external_context": _external_context(ticket),
@@ -902,16 +891,3 @@ def execute_ticket_action(db: Session, actor: ActorContext, ticket_id: int, acti
 
     db.commit()
     return build_ticket_detail(db, actor, ticket)
-
-
-def get_report_download(db: Session, actor: ActorContext, ticket_id: int, report_id: str, language: str) -> tuple[str, str] | None:
-    ticket = get_ticket(db, actor, ticket_id)
-    if ticket is None:
-        return None
-
-    lang = "en" if language == "en" else "zh"
-    for report in REPORT_LIBRARY.get(ticket.category_id, []):
-        if report["id"] == report_id:
-            filename = f"{report['report_no']}-{lang}.md"
-            return filename, report["content"][lang]
-    return None

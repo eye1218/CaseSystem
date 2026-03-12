@@ -97,7 +97,7 @@ export function hasMenuAccess(role: RoleCode, menuItem: string): boolean {
     T2: ["tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "reports", "kpi"],
     T3: ["tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "reports", "kpi"],
     ADMIN: ["dashboard", "tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "reports", "kpi", "configuration", "users", "audit", "recycle"],
-    CUSTOMER: ["tickets", "knowledge", "reports", "notifications"]
+    CUSTOMER: ["tickets", "reports", "notifications"]
   };
 
   return accessMatrix[role]?.includes(menuItem) ?? false;

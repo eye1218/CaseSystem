@@ -1,3 +1,6 @@
+import type { ReportSummary, ReportTemplateSummary } from "./report";
+import type { KnowledgeArticleSummary } from "./knowledge";
+
 export type TicketMainStatus =
   | "WAITING_RESPONSE"
   | "IN_PROGRESS"
@@ -63,18 +66,6 @@ export interface TicketKnowledgeArticle {
   content: LocalizedText;
 }
 
-export interface TicketReport {
-  id: string;
-  report_no: string;
-  title: LocalizedText;
-  type: LocalizedText;
-  status: "draft" | "final";
-  analyst: string;
-  created_at: string;
-  likes: number;
-  download_path: string;
-}
-
 export interface TicketAlert {
   seq: number;
   time: string;
@@ -120,8 +111,9 @@ export interface TicketDetail {
   ticket: TicketSummary;
   available_actions: string[];
   activity_feed: TicketActivityItem[];
-  knowledge_articles: TicketKnowledgeArticle[];
-  reports: TicketReport[];
+  related_knowledge: KnowledgeArticleSummary[];
+  report_templates: ReportTemplateSummary[];
+  reports: ReportSummary[];
   raw_alerts: TicketAlert[];
   siem_context_markdown: LocalizedText;
   external_context: TicketExternalContext;

@@ -5,10 +5,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock3,
-  Download,
   Edit3,
-  ExternalLink,
-  FileText,
   Inbox,
   Lock,
   MessageSquare,
@@ -25,10 +22,12 @@ import remarkGfm from "remark-gfm";
 import { Link, useParams } from "react-router-dom";
 
 import { addTicketComment, getTicketDetail, runTicketAction, updateTicket } from "../api/tickets";
-import KnowledgeDrawer from "../components/KnowledgeDrawer";
+import RelatedKnowledgePanel from "../components/RelatedKnowledgePanel";
+import TicketReportSections from "../components/TicketReportSections";
+import { ticketCategoryOptions } from "../constants/ticketCategories";
 import { useAuth } from "../contexts/AuthContext";
 import { useLanguage } from "../contexts/LanguageContext";
-import type { TicketActivityItem, TicketDetail, TicketKnowledgeArticle, TicketPriority } from "../types/ticket";
+import type { TicketActivityItem, TicketDetail, TicketPriority } from "../types/ticket";
 import { formatApiDateTime, parseApiDate } from "../utils/datetime";
 
 type MainTab = "activity" | "alerts" | "context";
@@ -41,13 +40,11 @@ interface EditFormState {
   risk_score: string;
 }
 
-const categoryOptions = [
-  { value: "intrusion", zh: "入侵检测", en: "Intrusion Detection" },
-  { value: "network", zh: "网络攻击", en: "Network Attack" },
-  { value: "data", zh: "数据安全", en: "Data Security" },
-  { value: "endpoint", zh: "终端安全", en: "Endpoint Security" },
-  { value: "phishing", zh: "网络钓鱼", en: "Phishing" }
-];
+const categoryOptions = ticketCategoryOptions.map((item) => ({
+  value: item.id,
+  zh: item.zh,
+  en: item.en
+}));
 
 const actionOrder = ["respond", "resolve", "close", "reopen", "claim", "move_to_pool", "edit"];
 
@@ -285,8 +282,6 @@ export default function TicketDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<MainTab>("activity");
-  const [selectedArticle, setSelectedArticle] = useState<TicketKnowledgeArticle | null>(null);
-  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [commentVisibility, setCommentVisibility] = useState<"PUBLIC" | "INTERNAL">("INTERNAL");
   const [submitting, setSubmitting] = useState<string | null>(null);
@@ -298,6 +293,19 @@ export default function TicketDetailPage() {
     priority: "P2",
     risk_score: "50"
   });
+
+  async function loadDetail(ticketId: string) {
+    setLoading(true);
+    setError("");
+    try {
+      const payload = await getTicketDetail(ticketId);
+      setDetail(payload);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load ticket");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -340,15 +348,6 @@ export default function TicketDetailPage() {
   }, [detail, user?.active_role]);
 
   const ticket = detail?.ticket;
-
-  const openKnowledge = (article: TicketKnowledgeArticle) => {
-    if (selectedArticle?.id === article.id && knowledgeOpen) {
-      setKnowledgeOpen(false);
-      return;
-    }
-    setSelectedArticle(article);
-    setKnowledgeOpen(true);
-  };
 
   const handleAction = async (action: string) => {
     if (!id || !detail) return;
@@ -779,73 +778,31 @@ export default function TicketDetailPage() {
             </div>
           </div>
 
-          <div className="rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <BookOpen className="h-4 w-4 text-blue-500" />
-                <h2 className="text-sm font-semibold text-slate-900 dark:text-white">{language === "zh" ? "关联知识库" : "Related Knowledge"}</h2>
-              </div>
-              <span className="text-xs text-slate-400">{detail.knowledge_articles.length}</span>
-            </div>
-            <div className="max-h-[360px] space-y-2.5 overflow-y-auto px-5 py-4">
-              {detail.knowledge_articles.map((article) => {
-                const active = knowledgeOpen && selectedArticle?.id === article.id;
-                return (
-                  <button
-                    key={article.id}
-                    onClick={() => openKnowledge(article)}
-                    className={`w-full rounded-2xl border px-4 py-3.5 text-left transition-all ${
-                      active
-                        ? "border-blue-400 bg-blue-50 dark:border-blue-700 dark:bg-blue-950/30"
-                        : "border-slate-200 hover:border-blue-300 hover:bg-blue-50/60 dark:border-slate-700 dark:hover:border-blue-700 dark:hover:bg-blue-950/20"
-                    }`}
-                  >
-                    <div className="mb-1.5 flex items-start justify-between gap-3">
-                      <div className="text-sm font-medium leading-6 text-slate-800 dark:text-slate-100">{article.title[language]}</div>
-                      <ExternalLink className={`h-4 w-4 flex-shrink-0 ${active ? "text-blue-500" : "text-slate-400"}`} />
-                    </div>
-                    <div className="text-xs leading-5 text-slate-500 dark:text-slate-400">{article.summary[language]}</div>
-                    <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-400">
-                      <span>{article.version}</span>
-                      <span>{article.updated_at}</span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          {user?.active_role !== "CUSTOMER" ? (
+            <RelatedKnowledgePanel
+              categoryId={ticket.category_id}
+              items={detail.related_knowledge}
+              language={language}
+              canCreate
+              onRefresh={() => {
+                if (id) {
+                  void loadDetail(id);
+                }
+              }}
+            />
+          ) : null}
 
-          <div className="rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <FileText className="h-4 w-4 text-blue-500" />
-                <h2 className="text-sm font-semibold text-slate-900 dark:text-white">{language === "zh" ? "关联报告" : "Related Reports"}</h2>
-              </div>
-              <span className="text-xs text-slate-400">{detail.reports.length}</span>
-            </div>
-            <div className="max-h-[336px] space-y-2.5 overflow-y-auto px-5 py-4">
-              {detail.reports.map((report) => (
-                <div key={report.id} className="rounded-2xl border border-slate-200 px-4 py-3.5 dark:border-slate-700">
-                  <div className="mb-1.5 flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-[11px] font-mono text-slate-400">{report.report_no}</div>
-                      <div className="text-sm font-medium leading-6 text-slate-800 dark:text-slate-100">{report.title[language]}</div>
-                    </div>
-                    <a
-                      href={`${report.download_path}?lang=${language}`}
-                      className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition-colors hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600 dark:border-slate-700 dark:hover:border-blue-700 dark:hover:bg-blue-950/30 dark:hover:text-blue-300"
-                    >
-                      <Download className="h-4 w-4" />
-                    </a>
-                  </div>
-                  <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                    <span>{report.type[language]}</span>
-                    <span>{report.created_at}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          <TicketReportSections
+            detail={detail}
+            language={language}
+            currentRole={user?.active_role}
+            onError={setError}
+            onRefresh={async () => {
+              if (id) {
+                await loadDetail(id);
+              }
+            }}
+          />
 
           <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <div className="mb-3 flex items-center gap-2">
@@ -887,8 +844,6 @@ export default function TicketDetailPage() {
           </div>
         </aside>
       </div>
-
-      <KnowledgeDrawer article={selectedArticle} open={knowledgeOpen} onClose={() => setKnowledgeOpen(false)} language={language} />
 
       {error && (
         <div className="fixed right-6 bottom-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 shadow-lg dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">

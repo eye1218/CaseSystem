@@ -47,3 +47,20 @@
 
 1. 工单列表表头里，可排序列使用 `button`，普通列使用 `span`；虽然 JSX 上复用了同一组 Tailwind 类，但线上按钮列仍然显示成浏览器默认的 `16px` 粗体。
 2. 根因是全局 `button, input, select { font: inherit; }` 写成了未分层规则，在 Tailwind v4 下压过了工具类，导致 `text-[11px]`、`font-semibold`、`leading-none` 对按钮不生效。
+
+## 2026-03-11 报告模块工作树环境
+
+1. 从独立 `git worktree` 切出来的工作目录默认不会继承主工作区的 Python 开发依赖与 `frontend/node_modules`，直接运行 `pytest` 会因为缺少 `httpx` 导入 `fastapi.testclient` 失败，直接运行 `npm run build` 会因为缺少 `vite` 报 `command not found`。
+
+## 2026-03-11 报告模块前端类型校验
+
+1. 前端最初只有 `vite build`，没有单独跑过 `tsc --noEmit`；补跑类型检查后暴露出仓库缺少 `frontend/src/vite-env.d.ts`，导致 `.svg` 资源导入在 TypeScript 下统一报模块声明缺失。
+
+## 2026-03-12 报告模块预览部署
+
+1. 预览机 `root@192.168.2.170:/root/workspace/CaseSystem` 上仍残留旧目录结构；执行 `rsync --delete` 时会对 `tests`、`casesystem`、`backend/app/modules/*` 等路径打印 `cannot delete non-empty directory` 警告，虽然本次未阻断部署，但说明远端工作目录并非干净镜像。
+
+## 2026-03-12 知识库模块实现
+
+1. 本地第一次对知识库页面做浏览器 smoke test 时，服务起在 `127.0.0.1:8011`，但该端口不在后端 `allowed_origins` 白名单内，导致登录请求被 CSRF 校验直接拦成 `403`。
+2. 前端错误处理最初没有正确透传后端 JSON `detail`，导致知识库详情 `404` 等业务错误会退化成通用 `Request failed`，不利于页面按设计显示精确文案。

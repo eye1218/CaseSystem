@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -17,30 +17,68 @@ from app.config import Settings
 from app.database import SessionLocal, get_db, init_db
 from app.dependencies import get_auth_service, require_auth, require_csrf
 from app.enums import RoleCode
+from app.knowledge import (
+    KnowledgeOperationError,
+    create_article,
+    delete_article,
+    get_article_detail,
+    like_article,
+    list_articles,
+    pin_article,
+    seed_knowledge,
+    unlike_article,
+    update_article,
+)
 from app.policies import ObjectScope
 from app.schemas import (
     AdminOverviewResponse,
     AuthResponse,
     CsrfTokenResponse,
+    KnowledgeArticleCreateRequest,
+    KnowledgeArticleDetailResponse,
+    KnowledgeArticleListResponse,
+    KnowledgeArticleUpdateRequest,
     LoginRequest,
     MessageResponse,
     ObjectAccessResponse,
     PasswordChangeRequest,
+    ReportTemplateListResponse,
+    ReportTemplateSummaryResponse,
+    ReportTemplateUpdateRequest,
     SwitchRoleRequest,
     TicketActionCommandRequest,
     TicketCommentCreateRequest,
     TicketCreateRequest,
     TicketDetailResponse,
     TicketListResponse,
+    TicketReportListResponse,
+    TicketReportResponse,
+    TicketReportUpdateRequest,
     TicketSummaryResponse,
     TicketUpdateRequest,
+)
+from app.reporting import (
+    ReportingOperationError,
+    create_report,
+    create_report_template,
+    delete_report,
+    download_report,
+    download_report_template,
+    get_report_detail,
+    get_report_template_detail,
+    list_report_templates,
+    list_reports,
+    replace_report_file,
+    replace_report_template_file,
+    seed_reporting,
+    update_report,
+    update_report_template,
 )
 from app.ticketing import (
     TicketOperationError,
     add_ticket_comment,
     create_ticket,
     execute_ticket_action,
-    get_report_download,
     get_ticket,
     get_ticket_detail,
     list_tickets,
@@ -56,6 +94,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db = SessionLocal()
         try:
             seed_roles(db)
+            seed_reporting(db, resolved_settings)
+            seed_knowledge(db)
         finally:
             db.close()
         yield
@@ -251,6 +291,152 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Ticket not found")
         return TicketDetailResponse.model_validate(detail)
 
+    @app.get("/api/v1/knowledge/articles", response_model=KnowledgeArticleListResponse)
+    def knowledge_article_list(
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+        category_id: str | None = None,
+    ) -> KnowledgeArticleListResponse:
+        try:
+            payload = list_articles(db, actor, category_id=category_id)
+        except KnowledgeOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return KnowledgeArticleListResponse.model_validate(payload)
+
+    @app.post(
+        "/api/v1/knowledge/articles",
+        response_model=KnowledgeArticleDetailResponse,
+        dependencies=[Depends(require_csrf)],
+    )
+    def knowledge_article_create(
+        payload: KnowledgeArticleCreateRequest,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+    ) -> KnowledgeArticleDetailResponse:
+        try:
+            detail = create_article(
+                db,
+                actor,
+                title=payload.title,
+                category_id=payload.category_id,
+                content_markdown=payload.content_markdown,
+            )
+        except KnowledgeOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return KnowledgeArticleDetailResponse.model_validate(detail)
+
+    @app.get("/api/v1/knowledge/articles/{article_id}", response_model=KnowledgeArticleDetailResponse)
+    def knowledge_article_detail(
+        article_id: str,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+    ) -> KnowledgeArticleDetailResponse:
+        try:
+            detail = get_article_detail(db, actor, article_id)
+        except KnowledgeOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return KnowledgeArticleDetailResponse.model_validate(detail)
+
+    @app.patch(
+        "/api/v1/knowledge/articles/{article_id}",
+        response_model=KnowledgeArticleDetailResponse,
+        dependencies=[Depends(require_csrf)],
+    )
+    def knowledge_article_update(
+        article_id: str,
+        payload: KnowledgeArticleUpdateRequest,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+    ) -> KnowledgeArticleDetailResponse:
+        try:
+            detail = update_article(
+                db,
+                actor,
+                article_id,
+                title=payload.title,
+                category_id=payload.category_id,
+                content_markdown=payload.content_markdown,
+            )
+        except KnowledgeOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return KnowledgeArticleDetailResponse.model_validate(detail)
+
+    @app.delete("/api/v1/knowledge/articles/{article_id}", status_code=204, dependencies=[Depends(require_csrf)])
+    def knowledge_article_delete(
+        article_id: str,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+    ) -> Response:
+        try:
+            delete_article(db, actor, article_id)
+        except KnowledgeOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return Response(status_code=204)
+
+    @app.post(
+        "/api/v1/knowledge/articles/{article_id}/like",
+        response_model=KnowledgeArticleDetailResponse,
+        dependencies=[Depends(require_csrf)],
+    )
+    def knowledge_article_like(
+        article_id: str,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+    ) -> KnowledgeArticleDetailResponse:
+        try:
+            detail = like_article(db, actor, article_id)
+        except KnowledgeOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return KnowledgeArticleDetailResponse.model_validate(detail)
+
+    @app.delete(
+        "/api/v1/knowledge/articles/{article_id}/like",
+        response_model=KnowledgeArticleDetailResponse,
+        dependencies=[Depends(require_csrf)],
+    )
+    def knowledge_article_unlike(
+        article_id: str,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+    ) -> KnowledgeArticleDetailResponse:
+        try:
+            detail = unlike_article(db, actor, article_id)
+        except KnowledgeOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return KnowledgeArticleDetailResponse.model_validate(detail)
+
+    @app.post(
+        "/api/v1/knowledge/articles/{article_id}/pin",
+        response_model=KnowledgeArticleDetailResponse,
+        dependencies=[Depends(require_csrf)],
+    )
+    def knowledge_article_pin(
+        article_id: str,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+    ) -> KnowledgeArticleDetailResponse:
+        try:
+            detail = pin_article(db, actor, article_id, pinned=True)
+        except KnowledgeOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return KnowledgeArticleDetailResponse.model_validate(detail)
+
+    @app.delete(
+        "/api/v1/knowledge/articles/{article_id}/pin",
+        response_model=KnowledgeArticleDetailResponse,
+        dependencies=[Depends(require_csrf)],
+    )
+    def knowledge_article_unpin(
+        article_id: str,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+    ) -> KnowledgeArticleDetailResponse:
+        try:
+            detail = pin_article(db, actor, article_id, pinned=False)
+        except KnowledgeOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return KnowledgeArticleDetailResponse.model_validate(detail)
+
     @app.post("/api/v1/tickets/{ticket_id}/comments", response_model=TicketDetailResponse, dependencies=[Depends(require_csrf)])
     def ticket_add_comment(
         ticket_id: int,
@@ -304,22 +490,277 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
         return TicketDetailResponse.model_validate(detail)
 
-    @app.get("/api/v1/tickets/{ticket_id}/reports/{report_id}/download")
-    def ticket_report_download(
-        ticket_id: int,
+    @app.get("/api/v1/report-templates", response_model=ReportTemplateListResponse)
+    def report_template_list(
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+        ticket_category_id: str | None = None,
+        status: str | None = None,
+    ) -> ReportTemplateListResponse:
+        try:
+            payload = list_report_templates(
+                db,
+                actor,
+                ticket_category_id=ticket_category_id,
+                status=status,
+            )
+        except ReportingOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return ReportTemplateListResponse.model_validate(payload)
+
+    @app.post(
+        "/api/v1/report-templates",
+        response_model=ReportTemplateSummaryResponse,
+        dependencies=[Depends(require_csrf)],
+    )
+    async def report_template_create(
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+        name: Annotated[str, Form()],
+        ticket_category_id: Annotated[str, Form()],
+        file: UploadFile = File(...),
+        description: Annotated[str | None, Form()] = None,
+        status: Annotated[str, Form()] = "ACTIVE",
+    ) -> ReportTemplateSummaryResponse:
+        try:
+            payload = await create_report_template(
+                db,
+                resolved_settings,
+                actor,
+                name=name,
+                description=description,
+                ticket_category_id=ticket_category_id,
+                status=status,
+                upload_file=file,
+            )
+        except ReportingOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return ReportTemplateSummaryResponse.model_validate(payload)
+
+    @app.get(
+        "/api/v1/report-templates/{template_id}",
+        response_model=ReportTemplateSummaryResponse,
+    )
+    def report_template_detail(
+        template_id: str,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+    ) -> ReportTemplateSummaryResponse:
+        try:
+            payload = get_report_template_detail(db, actor, template_id)
+        except ReportingOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return ReportTemplateSummaryResponse.model_validate(payload)
+
+    @app.patch(
+        "/api/v1/report-templates/{template_id}",
+        response_model=ReportTemplateSummaryResponse,
+        dependencies=[Depends(require_csrf)],
+    )
+    def report_template_update(
+        template_id: str,
+        payload: ReportTemplateUpdateRequest,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+    ) -> ReportTemplateSummaryResponse:
+        try:
+            detail = update_report_template(
+                db,
+                actor,
+                template_id=template_id,
+                name=payload.name,
+                description=payload.description,
+                status=payload.status,
+            )
+        except ReportingOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return ReportTemplateSummaryResponse.model_validate(detail)
+
+    @app.post(
+        "/api/v1/report-templates/{template_id}/replace-file",
+        response_model=ReportTemplateSummaryResponse,
+        dependencies=[Depends(require_csrf)],
+    )
+    async def report_template_replace(
+        template_id: str,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+        file: UploadFile = File(...),
+    ) -> ReportTemplateSummaryResponse:
+        try:
+            detail = await replace_report_template_file(
+                db,
+                resolved_settings,
+                actor,
+                template_id=template_id,
+                upload_file=file,
+            )
+        except ReportingOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return ReportTemplateSummaryResponse.model_validate(detail)
+
+    @app.get("/api/v1/report-templates/{template_id}/download")
+    def report_template_download(
+        template_id: str,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+    ) -> Response:
+        try:
+            filename, content, content_type = download_report_template(
+                db, resolved_settings, actor, template_id
+            )
+        except ReportingOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return Response(
+            content,
+            media_type=content_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.get("/api/v1/reports", response_model=TicketReportListResponse)
+    def report_list(
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+        search: str | None = None,
+        ticket_id: int | None = None,
+        report_type: str | None = None,
+        uploaded_by_me: bool = False,
+    ) -> TicketReportListResponse:
+        payload = list_reports(
+            db,
+            actor,
+            search=search,
+            ticket_id=ticket_id,
+            report_type=report_type,
+            uploaded_by_me=uploaded_by_me,
+        )
+        return TicketReportListResponse.model_validate(payload)
+
+    @app.post(
+        "/api/v1/reports",
+        response_model=TicketReportResponse,
+        dependencies=[Depends(require_csrf)],
+    )
+    async def report_create(
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+        ticket_id: Annotated[int, Form()],
+        title: Annotated[str, Form()],
+        report_type: Annotated[str, Form()],
+        file: UploadFile = File(...),
+        note: Annotated[str | None, Form()] = None,
+        source_template_id: Annotated[str | None, Form()] = None,
+    ) -> TicketReportResponse:
+        try:
+            payload = await create_report(
+                db,
+                resolved_settings,
+                actor,
+                ticket_id=ticket_id,
+                title=title,
+                report_type=report_type,
+                note=note,
+                source_template_id=source_template_id,
+                upload_file=file,
+            )
+        except ReportingOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return TicketReportResponse.model_validate(payload)
+
+    @app.get("/api/v1/reports/{report_id}", response_model=TicketReportResponse)
+    def report_detail(
         report_id: str,
         actor: Annotated[ActorContext, Depends(require_auth)],
         db: Annotated[Session, Depends(get_db)],
-        lang: str = "zh",
+    ) -> TicketReportResponse:
+        try:
+            payload = get_report_detail(db, actor, report_id)
+        except ReportingOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return TicketReportResponse.model_validate(payload)
+
+    @app.patch(
+        "/api/v1/reports/{report_id}",
+        response_model=TicketReportResponse,
+        dependencies=[Depends(require_csrf)],
+    )
+    def report_update(
+        report_id: str,
+        payload: TicketReportUpdateRequest,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+    ) -> TicketReportResponse:
+        try:
+            detail = update_report(
+                db,
+                actor,
+                report_id=report_id,
+                title=payload.title,
+                report_type=payload.report_type,
+                note=payload.note,
+                source_template_id=payload.source_template_id,
+            )
+        except ReportingOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return TicketReportResponse.model_validate(detail)
+
+    @app.post(
+        "/api/v1/reports/{report_id}/replace-file",
+        response_model=TicketReportResponse,
+        dependencies=[Depends(require_csrf)],
+    )
+    async def report_replace_file(
+        report_id: str,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+        file: UploadFile = File(...),
+    ) -> TicketReportResponse:
+        try:
+            detail = await replace_report_file(
+                db,
+                resolved_settings,
+                actor,
+                report_id=report_id,
+                upload_file=file,
+            )
+        except ReportingOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return TicketReportResponse.model_validate(detail)
+
+    @app.get("/api/v1/reports/{report_id}/download")
+    def report_download(
+        report_id: str,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
     ) -> Response:
-        report = get_report_download(db, actor, ticket_id, report_id, lang)
-        if report is None:
-            raise HTTPException(status_code=404, detail="Report not found")
-        filename, content = report
+        try:
+            filename, content, content_type = download_report(
+                db, resolved_settings, actor, report_id
+            )
+        except ReportingOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
         return Response(
             content,
-            media_type="text/markdown; charset=utf-8",
+            media_type=content_type,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.delete(
+        "/api/v1/reports/{report_id}",
+        status_code=204,
+        dependencies=[Depends(require_csrf)],
+    )
+    def report_delete(
+        report_id: str,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        db: Annotated[Session, Depends(get_db)],
+    ) -> Response:
+        try:
+            delete_report(db, resolved_settings, actor, report_id)
+        except ReportingOperationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        return Response(
+            status_code=204,
         )
 
     if frontend_dist.exists():

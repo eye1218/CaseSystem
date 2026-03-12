@@ -108,16 +108,103 @@ class TicketKnowledgeArticleResponse(BaseModel):
     content: LocalizedTextResponse
 
 
+class KnowledgePermissionsResponse(BaseModel):
+    can_edit: bool
+    can_delete: bool
+    can_pin: bool
+
+
+class KnowledgeArticleSummaryResponse(BaseModel):
+    id: str
+    title: str
+    category_id: str
+    category_name: str
+    excerpt: str
+    author_name: str
+    updated_at: datetime
+    likes_count: int
+    is_pinned: bool
+
+
+class KnowledgeArticleDetailResponse(KnowledgeArticleSummaryResponse):
+    content_markdown: str
+    viewer_has_liked: bool
+    permissions: KnowledgePermissionsResponse
+
+
+class KnowledgeArticleListResponse(BaseModel):
+    items: list[KnowledgeArticleSummaryResponse]
+    total_count: int
+
+
+class KnowledgeArticleCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    category_id: str = Field(min_length=1, max_length=64)
+    content_markdown: str = Field(min_length=1, max_length=20000)
+
+
+class KnowledgeArticleUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    category_id: str | None = Field(default=None, min_length=1, max_length=64)
+    content_markdown: str | None = Field(default=None, min_length=1, max_length=20000)
+
+
+class ReportTemplateSummaryResponse(BaseModel):
+    id: str
+    name: str
+    description: str | None
+    ticket_category_id: str
+    status: str
+    original_filename: str
+    content_type: str | None
+    size_bytes: int
+    download_path: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReportTemplateListResponse(BaseModel):
+    items: list[ReportTemplateSummaryResponse]
+    total_count: int
+
+
+class ReportTemplateUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=4000)
+    status: str | None = Field(default=None, pattern="^(ACTIVE|INACTIVE)$")
+
+
+class ReportTemplateReferenceResponse(BaseModel):
+    id: str
+    name: str
+
+
 class TicketReportResponse(BaseModel):
     id: str
-    report_no: str
-    title: LocalizedTextResponse
-    type: LocalizedTextResponse
-    status: str
-    analyst: str
-    created_at: str
-    likes: int
+    ticket_id: int
+    title: str
+    report_type: str
+    note: str | None
+    source_template: ReportTemplateReferenceResponse | None
+    original_filename: str
+    content_type: str | None
+    size_bytes: int
+    uploaded_by: str
+    created_at: datetime
+    updated_at: datetime
     download_path: str
+
+
+class TicketReportListResponse(BaseModel):
+    items: list[TicketReportResponse]
+    total_count: int
+
+
+class TicketReportUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    report_type: str | None = Field(default=None, min_length=1, max_length=64)
+    note: str | None = Field(default=None, max_length=4000)
+    source_template_id: str | None = Field(default=None, min_length=1, max_length=36)
 
 
 class TicketAlertResponse(BaseModel):
@@ -165,7 +252,8 @@ class TicketDetailResponse(BaseModel):
     ticket: TicketSummaryResponse
     available_actions: list[str]
     activity_feed: list[TicketActivityItemResponse]
-    knowledge_articles: list[TicketKnowledgeArticleResponse]
+    related_knowledge: list[KnowledgeArticleSummaryResponse]
+    report_templates: list[ReportTemplateSummaryResponse]
     reports: list[TicketReportResponse]
     raw_alerts: list[TicketAlertResponse]
     siem_context_markdown: LocalizedTextResponse

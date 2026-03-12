@@ -11,16 +11,20 @@ from sqlalchemy.pool import StaticPool
 from app.bootstrap import seed_roles
 from app.config import Settings, get_settings
 from app.database import Base, get_db
+from app.knowledge import seed_knowledge
 from app.main import create_app
 from app.models import User, UserRole
+from app.reporting import seed_reporting
 from app.security import hash_password
 
 
 @pytest.fixture
-def test_settings() -> Settings:
+def test_settings(tmp_path_factory) -> Settings:
+    storage_dir = tmp_path_factory.mktemp("report-storage")
     return Settings(
         database_url="sqlite+pysqlite:///:memory:",
         jwt_secret_key="test-secret-key-with-at-least-32-bytes",
+        report_storage_dir=str(storage_dir),
         cookie_secure=True,
         allowed_origins=["https://testserver"],
         throttle_sleep_enabled=False,
@@ -55,6 +59,8 @@ def app(test_settings: Settings):
 
     with TestingSessionLocal() as db:
         seed_roles(db)
+        seed_reporting(db, test_settings)
+        seed_knowledge(db)
         db.add(
             User(
                 id="user-disabled",

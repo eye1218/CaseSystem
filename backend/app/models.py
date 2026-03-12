@@ -218,3 +218,66 @@ class TicketAction(Base):
     to_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     context: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ReportTemplate(TimestampMixin, Base):
+    __tablename__ = "report_templates"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ticket_category_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="ACTIVE")
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    updated_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+
+    reports: Mapped[list["TicketReport"]] = relationship(back_populates="source_template")
+
+
+class TicketReport(TimestampMixin, Base):
+    __tablename__ = "ticket_reports"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    ticket_id: Mapped[int] = mapped_column(Integer, ForeignKey("tickets.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    report_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_template_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("report_templates.id", ondelete="SET NULL"), nullable=True
+    )
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    uploaded_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    uploaded_by_name: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    source_template: Mapped[Optional[ReportTemplate]] = relationship(back_populates="reports")
+
+
+class KnowledgeArticle(TimestampMixin, Base):
+    __tablename__ = "knowledge_articles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    category_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_markdown: Mapped[str] = mapped_column(Text, nullable=False)
+    is_pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_by_user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    created_by_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    updated_by_user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    updated_by_name: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
+class KnowledgeArticleLike(Base):
+    __tablename__ = "knowledge_article_likes"
+    __table_args__ = (UniqueConstraint("article_id", "user_id", name="uq_knowledge_article_like"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    article_id: Mapped[str] = mapped_column(String(36), ForeignKey("knowledge_articles.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

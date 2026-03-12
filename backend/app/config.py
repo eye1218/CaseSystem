@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 14
     csrf_token_ttl_minutes: int = 30
+    report_storage_dir: str = ".runtime/report-storage"
     cookie_secure: bool = False
     cookie_domain: str | None = None
     allowed_origins: List[str] = Field(

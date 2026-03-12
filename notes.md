@@ -84,3 +84,32 @@
 2. 遇到“只有按钮文字大小不对，普通文本正常”的问题时，不要只看 JSX 类名。
    - 最快的定位方式是直接在浏览器里读取 `getComputedStyle`
    - 本次线上表头的 `button` 实际计算值是 `16px / 700 / 24px`，而普通表头 `span` 是 `11px / 600 / 11px`
+
+## 2026-03-11 报告模块工作树环境
+
+1. 使用独立 `git worktree` 开发这个仓库时，需要把依赖准备动作视为工作树级别而不是仓库级别。
+   - Python 侧如果直接跑系统 `pytest`，需要先补 `httpx`，否则 `fastapi.testclient` 无法导入
+   - 前端侧进入新的工作树后需要在 `frontend/` 下重新执行一次 `npm install`，否则 `npm run build` 会因为找不到 `vite` 失败
+
+## 2026-03-11 报告模块前端类型校验
+
+1. 这个前端仓库默认只有 `vite build`，不会自动替代 TypeScript 的独立类型校验。
+   - 在交付前最好额外执行一次 `npx tsc --noEmit`
+   - 如果仓库里没有标准的 `frontend/src/vite-env.d.ts`，静态资源导入（例如 `.svg`）会在 `tsc` 阶段统一报模块声明缺失
+   - 最小修复方式是补上 `/// <reference types="vite/client" />`
+
+## 2026-03-12 报告模块预览部署
+
+1. 当前预览机目录上存在历史残留文件树时，`rsync --delete` 不一定能把不再受版本控制的旧目录清干净。
+   - 本次在远端看到 `tests`、`casesystem`、`backend/app/modules/*` 等路径出现 `cannot delete non-empty directory`
+   - 如果后续需要彻底收敛远端目录结构，应该安排一次受控的远端清理，而不是假设普通增量发布会自动抹平历史目录
+
+## 2026-03-12 知识库模块实现
+
+1. 本地浏览器联调知识库页面时，后端端口如果不在 `allowed_origins` 白名单内，登录请求会被 CSRF 拦截。
+   - 这次在 `127.0.0.1:8011` 上复现了 `403`
+   - 当前默认白名单已覆盖 `127.0.0.1:8010`
+   - 本地 smoke test 最好直接复用 `8010`，不要把端口问题误判成账号、cookie 或知识库接口错误
+2. 前端 `apiFetch` 需要在抛错前先稳定解析 JSON 错误体，再把 `detail` 透传给 UI。
+   - 如果把 `throw new Error(detail)` 放进解析 JSON 的 `try` 代码块里，会被自己的 `catch` 意外吞掉
+   - 更稳妥的写法是先提取 `detail`，再在 `try/catch` 外统一抛出错误

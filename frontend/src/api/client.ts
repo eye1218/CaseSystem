@@ -34,7 +34,16 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Request failed: ${response.status}`);
+    let message = text;
+    try {
+      const payload = JSON.parse(text) as { detail?: string };
+      if (typeof payload.detail === "string" && payload.detail) {
+        message = payload.detail;
+      }
+    } catch {
+      // Fall through to the raw response body if it is not JSON.
+    }
+    throw new Error(message || `Request failed: ${response.status}`);
   }
 
   if (response.status === 204) {
@@ -74,5 +83,51 @@ export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
       "X-CSRF-Token": csrfToken
     },
     body: body === undefined ? undefined : JSON.stringify(body)
+  });
+}
+
+export async function apiDelete(path: string): Promise<void> {
+  const csrfToken = (await issueCsrf()) || getCookie("XSRF-TOKEN");
+  if (!csrfToken) {
+    throw new Error("Missing CSRF token");
+  }
+
+  await apiFetch<void>(path, {
+    method: "DELETE",
+    headers: {
+      "X-CSRF-Token": csrfToken,
+      Origin: window.location.origin
+    }
+  });
+}
+
+export async function apiDeleteJson<T>(path: string): Promise<T> {
+  const csrfToken = (await issueCsrf()) || getCookie("XSRF-TOKEN");
+  if (!csrfToken) {
+    throw new Error("Missing CSRF token");
+  }
+
+  return apiFetch<T>(path, {
+    method: "DELETE",
+    headers: {
+      "X-CSRF-Token": csrfToken,
+      Origin: window.location.origin
+    }
+  });
+}
+
+export async function apiPostForm<T>(path: string, body: FormData): Promise<T> {
+  const csrfToken = (await issueCsrf()) || getCookie("XSRF-TOKEN");
+  if (!csrfToken) {
+    throw new Error("Missing CSRF token");
+  }
+
+  return apiFetch<T>(path, {
+    method: "POST",
+    headers: {
+      "X-CSRF-Token": csrfToken,
+      Origin: window.location.origin
+    },
+    body
   });
 }

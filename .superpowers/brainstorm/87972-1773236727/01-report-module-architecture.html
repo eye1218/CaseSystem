@@ -1,0 +1,70 @@
+<h2>报告模块设计草图</h2>
+<p class="subtitle">第 1 部分：信息架构与入口分层</p>
+
+<div class="section">
+  <div class="cards">
+    <div class="card">
+      <div class="card-body">
+        <div class="label">配置侧</div>
+        <h3>报告模板</h3>
+        <p>按工单类型关联。维护模板文件、名称、说明、启停状态。模板用于下载参考，不在报告模块主入口里管理。</p>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-body">
+        <div class="label">业务侧</div>
+        <h3>报告模块 /reports</h3>
+        <p>只展示用户上传的具体报告。支持列表 / 卡片切换、筛选、上传、编辑、替换文件、下载、硬删除。</p>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-body">
+        <div class="label">工单侧</div>
+        <h3>工单详情</h3>
+        <p>拆成两个区域：报告模板下载区、已上传报告区。上传入口也保留在这里，上传时自动绑定当前工单。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="split">
+    <div class="mockup">
+      <div class="mockup-header">页面 A：报告模块</div>
+      <div class="mockup-body">
+        <div class="mock-nav">筛选栏 | 搜索 | 上传报告 | 列表 / 卡片切换</div>
+        <div style="display:flex; gap:16px; margin-top:16px;">
+          <div class="mock-sidebar" style="min-height:280px;">
+            全部可见报告<br><br>
+            我上传的<br><br>
+            按报告类型筛选<br><br>
+            按工单 ID 筛选
+          </div>
+          <div class="mock-content" style="min-height:280px;">
+            报告列表 / 卡片区<br><br>
+            标题 / 工单 ID / 报告类型 / 来源模板 / 上传人 / 上传时间<br><br>
+            操作：下载 / 编辑 / 替换文件 / 删除
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="mockup">
+      <div class="mockup-header">页面 B：工单详情页</div>
+      <div class="mockup-body">
+        <div class="mock-nav">工单概览 | 活动流 | 关联知识库 | 报告模板 | 已上传报告</div>
+        <div style="display:flex; flex-direction:column; gap:16px; margin-top:16px;">
+          <div class="placeholder" style="min-height:110px;">
+            报告模板下载区<br><br>
+            按当前工单类型展示多个模板<br>
+            操作：下载模板
+          </div>
+          <div class="placeholder" style="min-height:150px;">
+            已上传报告区<br><br>
+            卡片展示当前工单下的所有报告<br>
+            操作：上传 / 下载 / 编辑 / 替换文件 / 删除
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

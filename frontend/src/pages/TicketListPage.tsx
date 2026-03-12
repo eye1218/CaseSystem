@@ -3,10 +3,12 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 
-import { listTickets } from "../api/tickets";
+import { ApiError } from "../api/client";
+import { getTicket, listTickets } from "../api/tickets";
 import DateRangePicker from "../components/DateRangePicker";
 import TicketDrawer from "../components/TicketDrawer";
 import { useLanguage } from "../contexts/LanguageContext";
+import { useRealtime } from "../contexts/RealtimeContext";
 import type { TicketSummary } from "../types/ticket";
 import { formatApiDateTime } from "../utils/datetime";
 
@@ -37,6 +39,92 @@ function metricSummary(items: TicketSummary[]) {
     timeout: items.filter((item) => item.main_status === "RESPONSE_TIMEOUT" || item.main_status === "RESOLUTION_TIMEOUT").length,
     closed: items.filter((item) => item.main_status === "RESOLVED" || item.main_status === "CLOSED").length
   };
+}
+
+function ticketMatchesFilters(
+  ticket: TicketSummary,
+  {
+    searchTerm,
+    filterCategory,
+    filterPriority,
+    filterStatus,
+    dateRange
+  }: {
+    searchTerm: string;
+    filterCategory: string;
+    filterPriority: string;
+    filterStatus: string;
+    dateRange: { start: string; end: string };
+  }
+) {
+  const normalizedSearch = searchTerm.trim();
+  if (normalizedSearch && !String(ticket.id).includes(normalizedSearch)) {
+    return false;
+  }
+  if (filterCategory !== "all" && ticket.category_id !== filterCategory) {
+    return false;
+  }
+  if (filterPriority !== "all" && ticket.priority !== filterPriority) {
+    return false;
+  }
+  if (filterStatus !== "all" && ticket.main_status !== filterStatus) {
+    return false;
+  }
+  const createdAt = new Date(ticket.created_at).getTime();
+  if (dateRange.start) {
+    const start = new Date(`${dateRange.start}T00:00:00`).getTime();
+    if (!Number.isNaN(start) && createdAt < start) {
+      return false;
+    }
+  }
+  if (dateRange.end) {
+    const end = new Date(`${dateRange.end}T23:59:59`).getTime();
+    if (!Number.isNaN(end) && createdAt > end) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sortTickets(items: TicketSummary[], field: SortField, direction: SortDirection) {
+  const priorityRank: Record<TicketSummary["priority"], number> = {
+    P1: 1,
+    P2: 2,
+    P3: 3,
+    P4: 4
+  };
+
+  const multiplier = direction === "asc" ? 1 : -1;
+  return [...items].sort((left, right) => {
+    let comparison = 0;
+    switch (field) {
+      case "id":
+        comparison = left.id - right.id;
+        break;
+      case "priority":
+        comparison = priorityRank[left.priority] - priorityRank[right.priority];
+        break;
+      case "risk_score":
+        comparison = left.risk_score - right.risk_score;
+        break;
+      case "created_at":
+        comparison = new Date(left.created_at).getTime() - new Date(right.created_at).getTime();
+        break;
+      case "response_deadline_at":
+        comparison =
+          new Date(left.response_deadline_at ?? 0).getTime() -
+          new Date(right.response_deadline_at ?? 0).getTime();
+        break;
+      case "resolution_deadline_at":
+        comparison =
+          new Date(left.resolution_deadline_at ?? 0).getTime() -
+          new Date(right.resolution_deadline_at ?? 0).getTime();
+        break;
+      default:
+        comparison = left.id - right.id;
+    }
+    return comparison * multiplier;
+  });
 }
 
 function statusClass(status: string) {
@@ -88,6 +176,7 @@ function RiskBar({ score }: { score: number }) {
 
 export default function TicketListPage() {
   const { language, t } = useLanguage();
+  const { lastTicketEvent } = useRealtime();
   const [items, setItems] = useState<TicketSummary[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -134,7 +223,79 @@ export default function TicketListPage() {
     return () => {
       cancelled = true;
     };
-  }, [dateRange.end, dateRange.start, filterCategory, filterPriority, filterStatus, searchTerm, selectedTicket?.id, sortDirection, sortField]);
+  }, [dateRange.end, dateRange.start, filterCategory, filterPriority, filterStatus, searchTerm, sortDirection, sortField]);
+
+  useEffect(() => {
+    if (!lastTicketEvent) {
+      return;
+    }
+    const ticketEvent = lastTicketEvent;
+
+    let cancelled = false;
+
+    async function refreshChangedTicket() {
+      const ticketId = String(ticketEvent.payload.ticket_id);
+      try {
+        const nextTicket = await getTicket(ticketId);
+        if (cancelled) {
+          return;
+        }
+        const matches = ticketMatchesFilters(nextTicket, {
+          searchTerm,
+          filterCategory,
+          filterPriority,
+          filterStatus,
+          dateRange
+        });
+        setItems((current) => {
+          const exists = current.some((item) => item.id === nextTicket.id);
+          if (!exists) {
+            return current;
+          }
+          if (!matches) {
+            return current.filter((item) => item.id !== nextTicket.id);
+          }
+          return sortTickets(
+            current.map((item) => (item.id === nextTicket.id ? nextTicket : item)),
+            sortField,
+            sortDirection
+          );
+        });
+        setSelectedTicket((current) => {
+          if (!current || current.id !== nextTicket.id) {
+            return current;
+          }
+          return matches ? nextTicket : null;
+        });
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
+          const changedTicketId = Number(ticketId);
+          setItems((current) => current.filter((item) => item.id !== changedTicketId));
+          setSelectedTicket((current) =>
+            current?.id === changedTicketId ? null : current
+          );
+        }
+      }
+    }
+
+    void refreshChangedTicket();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    dateRange,
+    filterCategory,
+    filterPriority,
+    filterStatus,
+    lastTicketEvent,
+    searchTerm,
+    sortDirection,
+    sortField
+  ]);
 
   const metrics = useMemo(() => metricSummary(items), [items]);
 

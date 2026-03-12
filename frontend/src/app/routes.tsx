@@ -1,18 +1,24 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import MainLayout from "../components/MainLayout";
+import RequireAdminRoute from "../components/RequireAdminRoute";
 import RequireInternalKnowledge from "../components/RequireInternalKnowledge";
+import EventDetailPage from "../pages/EventDetailPage";
+import EventEditorPage from "../pages/EventEditorPage";
+import EventsPage from "../pages/EventsPage";
 import LoginPage from "../pages/LoginPage";
-import ConfigurationPage from "../pages/ConfigurationPage";
+import TicketCreatePage from "../pages/TicketCreatePage";
+import TicketListPage from "../pages/TicketListPage";
+import TicketDetailPage from "../pages/TicketDetailPage";
 import KnowledgeDetailPage from "../pages/KnowledgeDetailPage";
 import KnowledgeEditorPage from "../pages/KnowledgeEditorPage";
 import KnowledgeListPage from "../pages/KnowledgeListPage";
-import ReportsPage from "../pages/ReportsPage";
-import ReportTemplatesPage from "../pages/ReportTemplatesPage";
-import TicketCreatePage from "../pages/TicketCreatePage";
-import TicketDetailPage from "../pages/TicketDetailPage";
+import NotificationsPage from "../pages/NotificationsPage";
 import PlaceholderPage from "../pages/PlaceholderPage";
-import TicketListPage from "../pages/TicketListPage";
+import ConfigurationPage from "../pages/ConfigurationPage";
+import ReportTemplatesPage from "../pages/ReportTemplatesPage";
+import ReportsPage from "../pages/ReportsPage";
+import TemplateRenderingPage from "../pages/TemplateRenderingPage";
 
 export const router = createBrowserRouter([
   {
@@ -49,7 +55,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "notifications",
-        element: <PlaceholderPage titleKey="nav.notifications" description="通知中心尚未进入本阶段开发。" />
+        element: <NotificationsPage />
       },
       {
         path: "knowledge",
@@ -84,6 +90,38 @@ export const router = createBrowserRouter([
         )
       },
       {
+        path: "events",
+        element: (
+          <RequireAdminRoute>
+            <EventsPage />
+          </RequireAdminRoute>
+        )
+      },
+      {
+        path: "events/new",
+        element: (
+          <RequireAdminRoute>
+            <EventEditorPage />
+          </RequireAdminRoute>
+        )
+      },
+      {
+        path: "events/:id",
+        element: (
+          <RequireAdminRoute>
+            <EventDetailPage />
+          </RequireAdminRoute>
+        )
+      },
+      {
+        path: "events/:id/edit",
+        element: (
+          <RequireAdminRoute>
+            <EventEditorPage />
+          </RequireAdminRoute>
+        )
+      },
+      {
         path: "reports",
         element: <ReportsPage />
       },
@@ -94,6 +132,10 @@ export const router = createBrowserRouter([
       {
         path: "configuration",
         element: <ConfigurationPage />
+      },
+      {
+        path: "configuration/templates",
+        element: <TemplateRenderingPage />
       },
       {
         path: "configuration/report-templates",

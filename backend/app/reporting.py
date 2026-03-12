@@ -11,6 +11,7 @@ from app.auth import ActorContext
 from app.config import Settings
 from app.enums import RoleCode
 from app.models import ReportTemplate, Ticket, TicketAction, TicketReport
+from app.modules.tickets.cache import get_ticket_cache
 from app.reporting_storage import delete_file, read_file_bytes, save_bytes, save_upload_file
 from app.security import utcnow
 
@@ -60,6 +61,10 @@ class ReportingOperationError(Exception):
 class AccessibleReport:
     report: TicketReport
     ticket: Ticket
+
+
+def _invalidate_ticket_detail_cache(ticket_id: int) -> None:
+    get_ticket_cache().invalidate_ticket(ticket_id)
 
 
 def seed_reporting(db: Session, settings: Settings) -> None:
@@ -501,6 +506,7 @@ async def create_report(
         db.commit()
         db.refresh(report)
         db.refresh(ticket)
+        _invalidate_ticket_detail_cache(ticket.id)
         return _report_payload(report)
     except Exception:
         db.rollback()
@@ -551,6 +557,7 @@ def update_report(
     )
     db.commit()
     db.refresh(report)
+    _invalidate_ticket_detail_cache(ticket.id)
     return _report_payload(report)
 
 
@@ -595,6 +602,7 @@ async def replace_report_file(
         raise
 
     delete_file(settings, old_storage_key)
+    _invalidate_ticket_detail_cache(ticket.id)
     return _report_payload(report)
 
 
@@ -620,6 +628,7 @@ def delete_report(db: Session, settings: Settings, actor: ActorContext, report_i
     db.delete(report)
     db.commit()
     delete_file(settings, storage_key)
+    _invalidate_ticket_detail_cache(ticket.id)
 
 
 def download_report(

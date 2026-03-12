@@ -1,0 +1,13 @@
+
+- basedpyright currently reports many pre-existing strict diagnostics (implicit-relative-import/type-safety) across legacy backend files, so LSP output is noisy even when runtime tests pass.
+- During T3, basedpyright in this environment reports `reportMissingImports` for `celery`/worker imports even after runtime import checks succeed with the shared `.venv`, so worker verification should prioritize direct Python import/runtime checks.
+- While moving app/auth.py into a module package, basedpyright surfaced strict Optional flow errors in the auth service; resolved by tightening control-flow typing (NoReturn on _raise_login_failed) and explicit narrowing/casts at guarded points without changing runtime semantics.
+- Running `alembic upgrade head` against the default worktree SQLite (`casesystem.db`) failed with "table ... already exists" because the DB already had baseline tables but no alembic version stamp; migration verification must use a clean temp DB URL.
+- In T6, importing `ticket_router` from `app.modules.tickets.__init__` caused an `ImportError` circular chain (`app.auth` -> `app.models` -> `app.modules.tickets` -> routes -> `app.auth`) during `create_app()` import checks.
+
+- T11 is currently blocked by repeated no-op delegation behavior. Repeated delegated attempts returned without landing real Event integration code. Verified missing code locations: `backend/app/modules/events/service.py` (missing `create_internal_event` helper) and `backend/app/modules/tickets/service.py` (missing ticket->Event calls).
+- F4 read-only fidelity check (2026-03-11): direct code inspection now shows T11 ticket->Event hooks are present in `backend/app/modules/tickets/service.py` and event helper functions exist in `backend/app/modules/events/service.py`; previous blocker note is stale.
+- F4 read-only fidelity check (2026-03-11): T12 remains missing in this worktree (no `backend/tests/test_event_api.py` or sweep guard tests), so final-wave verification cannot honestly pass yet.
+- F4 read-only fidelity check (2026-03-11): T9 QA payload shape in the plan (`name/related_object/tags/delay`) does not match the implemented Event create schema (`event_type/trigger_time/title/description/payload`), so plan QA as written is currently not executable without alignment.
+
+- T11 Blocker (2026-03-11): Repeated delegations claim T11 success but `backend/app/modules/events/service.py` still lacks helper functions. Direct read shows no `_ticket_related_object`, `create_ticket_event`, `create_ticket_timeout_events`, or `cancel_pending_ticket_events`. Hands-on QA after ticket creation returned `event_names []`. This blocks T11 and therefore T12.

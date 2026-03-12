@@ -1,0 +1,5 @@
+- T11 is currently blocked by repeated no-op delegation behavior. Repeated delegated attempts returned without landing real Event integration code. Verified missing code locations: `backend/app/modules/events/service.py` (missing `create_internal_event` helper) and `backend/app/modules/tickets/service.py` (missing ticket->Event calls).
+- F4 unresolved fidelity gap (2026-03-11): T12 test scope is still absent (no Event API/admin guard lifecycle tests and no sweep idempotency/cancel-skip tests in `backend/tests`).
+- F4 unresolved fidelity gap (2026-03-11): T9 plan QA scenario input contract and implemented Event create API contract diverge, which blocks literal plan-evidence execution unless reconciled.
+
+- T11 Blocker (2026-03-11): Repeated delegations claim T11 success but `backend/app/modules/events/service.py` still lacks helper functions. Direct read shows no `_ticket_related_object`, `create_ticket_event`, `create_ticket_timeout_events`, or `cancel_pending_ticket_events`. Hands-on QA after ticket creation returned `event_names []`. This blocks T11 and therefore T12.

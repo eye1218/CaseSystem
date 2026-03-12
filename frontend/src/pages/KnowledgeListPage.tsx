@@ -1,6 +1,5 @@
-import { BookOpen, ChevronRight, Filter, Pin, Plus, Search, ThumbsUp, Clock, User } from "lucide-react";
-import { useEffect, useState } from "react";
-import { useDeferredValue } from "react";
+import { BookOpen, ChevronRight, Clock, Filter, Pin, Plus, Search, ThumbsUp, User } from "lucide-react";
+import { useDeferredValue, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { listKnowledgeArticles } from "../api/knowledge";

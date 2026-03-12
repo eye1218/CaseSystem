@@ -1,8 +1,10 @@
 import { apiFetch, apiPatch, apiPost } from "./client";
 import type {
+  TicketActionPayload,
   TicketCreatePayload,
   TicketCommentPayload,
   TicketDetail,
+  TicketLive,
   TicketListResponse,
   TicketSummary,
   TicketUpdatePayload
@@ -49,12 +51,16 @@ export function getTicketDetail(ticketId: string) {
   return apiFetch<TicketDetail>(`/api/v1/tickets/${ticketId}/detail`);
 }
 
+export function getTicketLive(ticketId: string) {
+  return apiFetch<TicketLive>(`/api/v1/tickets/${ticketId}/live`);
+}
+
 export function addTicketComment(ticketId: string, payload: TicketCommentPayload) {
   return apiPost<TicketDetail>(`/api/v1/tickets/${ticketId}/comments`, payload);
 }
 
-export function runTicketAction(ticketId: string, action: string, note?: string) {
-  return apiPost<TicketDetail>(`/api/v1/tickets/${ticketId}/actions/${action}`, note ? { note } : {});
+export function runTicketAction(ticketId: string, action: string, payload: TicketActionPayload) {
+  return apiPost<TicketDetail>(`/api/v1/tickets/${ticketId}/actions/${action}`, payload);
 }
 
 export function updateTicket(ticketId: string, payload: TicketUpdatePayload) {

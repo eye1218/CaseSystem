@@ -1,7 +1,6 @@
 import {
   AlertTriangle,
   ArrowLeft,
-  BookOpen,
   CheckCircle2,
   ChevronRight,
   Clock3,
@@ -21,13 +20,15 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Link, useParams } from "react-router-dom";
 
-import { addTicketComment, getTicketDetail, runTicketAction, updateTicket } from "../api/tickets";
+import { ApiError } from "../api/client";
+import { addTicketComment, getTicketDetail, getTicketLive, runTicketAction, updateTicket } from "../api/tickets";
 import RelatedKnowledgePanel from "../components/RelatedKnowledgePanel";
 import TicketReportSections from "../components/TicketReportSections";
 import { ticketCategoryOptions } from "../constants/ticketCategories";
 import { useAuth } from "../contexts/AuthContext";
 import { useLanguage } from "../contexts/LanguageContext";
-import type { TicketActivityItem, TicketDetail, TicketPriority } from "../types/ticket";
+import { useRealtime } from "../contexts/RealtimeContext";
+import type { TicketActivityItem, TicketDetail, TicketLive, TicketPriority } from "../types/ticket";
 import { formatApiDateTime, parseApiDate } from "../utils/datetime";
 
 type MainTab = "activity" | "alerts" | "context";
@@ -274,10 +275,23 @@ function InfoCard({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+function mergeLiveIntoDetail(current: TicketDetail, live: TicketLive): TicketDetail {
+  return {
+    ...current,
+    ticket: live.ticket,
+    available_actions: live.available_actions,
+    activity_feed: live.activity_feed,
+    raw_alerts: live.raw_alerts,
+    responsibility_summary: live.responsibility_summary,
+    permission_scope: live.permission_scope
+  };
+}
+
 export default function TicketDetailPage() {
   const { id } = useParams();
   const { language, t } = useLanguage();
   const { user } = useAuth();
+  const { lastTicketEvent } = useRealtime();
   const [detail, setDetail] = useState<TicketDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -294,7 +308,7 @@ export default function TicketDetailPage() {
     risk_score: "50"
   });
 
-  async function loadDetail(ticketId: string) {
+  const loadDetail = async (ticketId: string) => {
     setLoading(true);
     setError("");
     try {
@@ -305,27 +319,16 @@ export default function TicketDetailPage() {
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
       if (!id) return;
-      setLoading(true);
-      setError("");
-      try {
-        const payload = await getTicketDetail(id);
-        if (cancelled) return;
-        setDetail(payload);
-      } catch (loadError) {
-        if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "Failed to load ticket");
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+      await loadDetail(id);
+      if (cancelled) {
+        return;
       }
     }
 
@@ -334,6 +337,42 @@ export default function TicketDetailPage() {
       cancelled = true;
     };
   }, [id]);
+
+  useEffect(() => {
+    if (!id || !lastTicketEvent) {
+      return;
+    }
+    const ticketId = id;
+    if (String(lastTicketEvent.payload.ticket_id) !== ticketId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshLiveSlices() {
+      try {
+        const payload = await getTicketLive(ticketId);
+        if (cancelled) {
+          return;
+        }
+        setDetail((current) => (current ? mergeLiveIntoDetail(current, payload) : current));
+      } catch (loadError) {
+        if (cancelled) {
+          return;
+        }
+        if (loadError instanceof ApiError && (loadError.status === 403 || loadError.status === 404)) {
+          setDetail(null);
+        }
+        setError(loadError instanceof Error ? loadError.message : "Failed to refresh ticket");
+      }
+    }
+
+    void refreshLiveSlices();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, lastTicketEvent]);
 
   useEffect(() => {
     if (!detail) return;
@@ -359,7 +398,9 @@ export default function TicketDetailPage() {
     setSubmitting(action);
     setError("");
     try {
-      const payload = await runTicketAction(id, action);
+      const payload = await runTicketAction(id, action, {
+        version: detail.ticket.version
+      });
       setDetail(payload);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Action failed");
@@ -370,12 +411,13 @@ export default function TicketDetailPage() {
 
   const handleCommentSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!id || !commentText.trim()) return;
+    if (!id || !detail || !commentText.trim()) return;
 
     setSubmitting("comment");
     setError("");
     try {
       const payload = await addTicketComment(id, {
+        version: detail.ticket.version,
         content: commentText.trim(),
         visibility: commentVisibility
       });
@@ -390,12 +432,13 @@ export default function TicketDetailPage() {
 
   const handleEditSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!id) return;
+    if (!id || !detail) return;
 
     setSubmitting("edit");
     setError("");
     try {
       const payload = await updateTicket(id, {
+        version: detail.ticket.version,
         title: form.title,
         description: form.description,
         category_id: form.category_id,
@@ -793,9 +836,9 @@ export default function TicketDetailPage() {
           ) : null}
 
           <TicketReportSections
+            currentRole={user?.active_role}
             detail={detail}
             language={language}
-            currentRole={user?.active_role}
             onError={setError}
             onRefresh={async () => {
               if (id) {

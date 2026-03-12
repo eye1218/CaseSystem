@@ -1,5 +1,5 @@
-import type { ReportSummary, ReportTemplateSummary } from "./report";
 import type { KnowledgeArticleSummary } from "./knowledge";
+import type { ReportSummary, ReportTemplateSummary } from "./report";
 
 export type TicketMainStatus =
   | "WAITING_RESPONSE"
@@ -20,6 +20,7 @@ export type TicketPriority = "P1" | "P2" | "P3" | "P4";
 
 export interface TicketSummary {
   id: number;
+  version: number;
   title: string;
   description: string;
   category_id: string;
@@ -121,17 +122,33 @@ export interface TicketDetail {
   permission_scope: TicketPermissionScope;
 }
 
+export interface TicketLive {
+  ticket: TicketSummary;
+  available_actions: string[];
+  activity_feed: TicketActivityItem[];
+  raw_alerts: TicketAlert[];
+  responsibility_summary: LocalizedText;
+  permission_scope: TicketPermissionScope;
+}
+
 export interface TicketCommentPayload {
+  version: number;
   content: string;
   visibility: "PUBLIC" | "INTERNAL";
 }
 
 export interface TicketUpdatePayload {
+  version: number;
   title?: string;
   description?: string;
   category_id?: string;
   priority?: TicketPriority;
   risk_score?: number;
+}
+
+export interface TicketActionPayload {
+  version: number;
+  note?: string;
 }
 
 export interface TicketCreatePayload {

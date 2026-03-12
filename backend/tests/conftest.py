@@ -11,11 +11,12 @@ from sqlalchemy.pool import StaticPool
 from app.bootstrap import seed_roles
 from app.config import Settings, get_settings
 from app.database import Base, get_db
-from app.knowledge import seed_knowledge
 from app.main import create_app
 from app.models import User, UserRole
+from app.modules.tickets.cache import reset_ticket_cache_backend
 from app.reporting import seed_reporting
 from app.security import hash_password
+from app.worker.task_base import reset_worker_session_factory, set_worker_session_factory
 
 
 @pytest.fixture
@@ -56,11 +57,11 @@ def app(test_settings: Settings):
     app.dependency_overrides[get_settings] = override_settings
     app.dependency_overrides[get_db] = override_db
     app.state.session_factory = TestingSessionLocal
+    set_worker_session_factory(TestingSessionLocal)
 
     with TestingSessionLocal() as db:
         seed_roles(db)
         seed_reporting(db, test_settings)
-        seed_knowledge(db)
         db.add(
             User(
                 id="user-disabled",
@@ -74,7 +75,9 @@ def app(test_settings: Settings):
         db.add(UserRole(user_id="user-disabled", role_code="ADMIN", is_primary=True))
         db.commit()
 
-    return app
+    yield app
+    reset_worker_session_factory()
+    reset_ticket_cache_backend()
 
 
 @pytest.fixture

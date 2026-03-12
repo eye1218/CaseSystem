@@ -6,6 +6,7 @@ import {
   FileText,
   Inbox,
   LayoutDashboard,
+  Radio,
   Settings,
   Ticket,
   Clock,
@@ -16,6 +17,7 @@ import {
 
 import { hasMenuAccess, useAuth } from "../contexts/AuthContext";
 import { useLanguage } from "../contexts/LanguageContext";
+import { useRealtime } from "../contexts/RealtimeContext";
 import { useTheme } from "../contexts/ThemeContext";
 import logoDark from "../styles/logo-dark.svg";
 import logoLight from "../styles/logo-light.svg";
@@ -27,6 +29,7 @@ const menuItems = [
   { id: "slaMonitor", icon: Clock, label: "nav.slaMonitor", path: "/sla-monitor" },
   { id: "notifications", icon: Bell, label: "nav.notifications", path: "/notifications" },
   { id: "knowledge", icon: BookOpen, label: "nav.knowledge", path: "/knowledge" },
+  { id: "events", icon: Radio, label: "nav.events", path: "/events" },
   { id: "reports", icon: FileText, label: "nav.reports", path: "/reports" },
   { id: "kpi", icon: TrendingUp, label: "nav.kpi", path: "/kpi" },
   { id: "configuration", icon: Settings, label: "nav.configuration", path: "/configuration" },
@@ -38,6 +41,7 @@ const menuItems = [
 export default function AppSidebar() {
   const { user } = useAuth();
   const { t } = useLanguage();
+  const { unreadCount } = useRealtime();
   const { theme } = useTheme();
 
   if (!user) return null;
@@ -80,6 +84,11 @@ export default function AppSidebar() {
                 >
                   <Icon className="h-5 w-5" />
                   <span className="font-medium">{t(item.label)}</span>
+                  {item.id === "notifications" && unreadCount > 0 && (
+                    <span className="ml-auto inline-flex min-w-6 items-center justify-center rounded-full bg-blue-600 px-2 py-0.5 text-[11px] font-semibold text-white">
+                      {unreadCount > 99 ? "99+" : unreadCount}
+                    </span>
+                  )}
                 </NavLink>
               );
             })}

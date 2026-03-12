@@ -353,7 +353,7 @@ export default function KnowledgeEditorPage() {
                       setContent(event.target.value);
                       setErrors((current) => ({ ...current, content: undefined }));
                     }}
-                    className="flex-1 w-full resize-none bg-slate-900 p-5 font-mono text-xs leading-relaxed text-slate-200 outline-none dark:bg-slate-950"
+                    className="w-full flex-1 resize-none bg-slate-900 p-5 font-mono text-xs leading-relaxed text-slate-200 outline-none dark:bg-slate-950"
                     placeholder={zh ? "在此输入 Markdown 正文内容…" : "Enter Markdown content here…"}
                     style={{ minHeight: mode === "split" ? "520px" : "480px" }}
                   />

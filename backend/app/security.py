@@ -35,8 +35,17 @@ def maybe_rehash_password(password: str, hashed_password: str) -> str | None:
     return None
 
 
-def create_access_token(*, settings: Settings, user_id: str, session_id: str, token_version: int, role_version: int) -> str:
+def create_access_token(
+    *,
+    settings: Settings,
+    user_id: str,
+    session_id: str,
+    token_version: int,
+    role_version: int,
+    ttl_minutes: int | None = None,
+) -> str:
     now = datetime.now(timezone.utc)
+    expires_in_minutes = ttl_minutes or settings.access_token_ttl_minutes
     payload = {
         "iss": settings.jwt_issuer,
         "aud": settings.jwt_audience,
@@ -46,7 +55,7 @@ def create_access_token(*, settings: Settings, user_id: str, session_id: str, to
         "rv": role_version,
         "iat": int(now.timestamp()),
         "nbf": int(now.timestamp()),
-        "exp": int((now + timedelta(minutes=settings.access_token_ttl_minutes)).timestamp()),
+        "exp": int((now + timedelta(minutes=expires_in_minutes)).timestamp()),
     }
     headers = {"typ": "at+jwt", "alg": settings.jwt_algorithm}
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm, headers=headers)

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.enums import RoleCode
 from app.models import Role, User, UserRole
+from app.modules.knowledge.service import seed_knowledge
 from app.security import hash_password
 from app.ticketing import seed_tickets
 
@@ -57,6 +58,7 @@ def seed_roles(db: Session) -> None:
     db.commit()
     seed_demo_users(db)
     seed_tickets(db)
+    seed_knowledge(db)
 
 
 def seed_demo_users(db: Session) -> None:

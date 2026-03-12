@@ -169,28 +169,28 @@ class AuthService:
         token = request.cookies.get(self._access_cookie_name)
         if not token:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-        from jwt import ExpiredSignatureError, InvalidTokenError
+        claims = self._decode_access_token_or_error(token)
+        return self._authenticate_claims(claims)
 
-        try:
-            claims = decode_access_token(token, self.settings)
-        except ExpiredSignatureError as exc:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Access token expired") from exc
-        except InvalidTokenError as exc:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token") from exc
-        user = self.db.scalar(select(User).where(User.id == claims["sub"]))
+    def authenticate_token(self, token: str) -> ActorContext:
+        claims = self._decode_access_token_or_error(token)
+        return self._authenticate_claims(claims)
+
+    def issue_socket_token(self, actor: ActorContext) -> str:
+        user = self.db.scalar(select(User).where(User.id == actor.user_id))
         if user is None or user.status != UserStatus.ACTIVE.value:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User is not active")
-        session_record = self.db.scalar(select(AuthSession).where(AuthSession.id == claims["sid"]))
+        session_record = self.db.scalar(select(AuthSession).where(AuthSession.id == actor.session_id))
         if session_record is None or session_record.status != SessionStatus.ACTIVE.value:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session is not active")
-        if user.token_version != claims["tv"] or user.role_version != claims["rv"]:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token version mismatch")
-        session_record.last_seen_at = utcnow()
-        role_session = self.db.scalar(select(UserRoleSession).where(UserRoleSession.session_id == session_record.id))
-        if role_session is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Role session missing")
-        self.db.commit()
-        return self._build_actor_context(session_id=session_record.id, user=user, active_role=role_session.active_role_code)
+        return create_access_token(
+            settings=self.settings,
+            user_id=user.id,
+            session_id=session_record.id,
+            token_version=user.token_version,
+            role_version=user.role_version,
+            ttl_minutes=self.settings.realtime_socket_token_ttl_minutes,
+        )
 
     def refresh(self, *, request: Request, response: Response) -> AuthResponse:
         refresh_token = request.cookies.get(self._refresh_cookie_name)
@@ -306,6 +306,43 @@ class AuthService:
     def require_object_access(self, actor: ActorContext, scope: ObjectScope) -> None:
         if not has_object_access(user_id=actor.user_id, active_role=actor.active_role, scope=scope):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Object access denied")
+
+    def _decode_access_token_or_error(self, token: str) -> dict[str, object]:
+        from jwt import ExpiredSignatureError, InvalidTokenError
+
+        try:
+            return decode_access_token(token, self.settings)
+        except ExpiredSignatureError as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Access token expired") from exc
+        except InvalidTokenError as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token") from exc
+
+    def _authenticate_claims(self, claims: dict[str, object]) -> ActorContext:
+        user_id = claims.get("sub")
+        session_id = claims.get("sid")
+        token_version = claims.get("tv")
+        role_version = claims.get("rv")
+        if not isinstance(user_id, str) or not isinstance(session_id, str):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token")
+
+        user = self.db.scalar(select(User).where(User.id == user_id))
+        if user is None or user.status != UserStatus.ACTIVE.value:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User is not active")
+        session_record = self.db.scalar(select(AuthSession).where(AuthSession.id == session_id))
+        if session_record is None or session_record.status != SessionStatus.ACTIVE.value:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session is not active")
+        if user.token_version != token_version or user.role_version != role_version:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token version mismatch")
+        session_record.last_seen_at = utcnow()
+        role_session = self.db.scalar(select(UserRoleSession).where(UserRoleSession.session_id == session_record.id))
+        if role_session is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Role session missing")
+        self.db.commit()
+        return self._build_actor_context(
+            session_id=session_record.id,
+            user=user,
+            active_role=role_session.active_role_code,
+        )
 
     def _build_actor_context(self, *, session_id: str, user: User, active_role: str) -> ActorContext:
         roles = sorted(

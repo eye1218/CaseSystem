@@ -1,3 +1,15 @@
+export class ApiError extends Error {
+  status: number;
+  detail: unknown;
+
+  constructor(message: string, status: number, detail?: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
 function getCookie(name: string): string | null {
   const encodedName = `${name}=`;
   const parts = document.cookie.split(";").map((part) => part.trim());
@@ -33,17 +45,31 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   });
 
   if (!response.ok) {
-    const text = await response.text();
-    let message = text;
+    const rawText = await response.text();
+    let parsed: unknown = rawText || undefined;
+    let detail: unknown = rawText || undefined;
+    let message = rawText || `Request failed: ${response.status}`;
+
     try {
-      const payload = JSON.parse(text) as { detail?: string };
-      if (typeof payload.detail === "string" && payload.detail) {
-        message = payload.detail;
+      parsed = JSON.parse(rawText) as unknown;
+      if (parsed && typeof parsed === "object") {
+        const record = parsed as Record<string, unknown>;
+        detail = record.detail ?? parsed;
+
+        if (typeof detail === "string") {
+          message = detail;
+        } else if (detail && typeof detail === "object") {
+          const detailRecord = detail as Record<string, unknown>;
+          if (typeof detailRecord.message === "string") {
+            message = detailRecord.message;
+          }
+        } else if (typeof record.message === "string") {
+          message = record.message;
+        }
       }
-    } catch {
-      // Fall through to the raw response body if it is not JSON.
-    }
-    throw new Error(message || `Request failed: ${response.status}`);
+    } catch {}
+
+    throw new ApiError(message, response.status, detail ?? parsed);
   }
 
   if (response.status === 204) {
@@ -80,7 +106,8 @@ export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
-      "X-CSRF-Token": csrfToken
+      "X-CSRF-Token": csrfToken,
+      Origin: window.location.origin
     },
     body: body === undefined ? undefined : JSON.stringify(body)
   });

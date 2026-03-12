@@ -3,14 +3,14 @@ import {
   ArrowLeft,
   BookOpen,
   ChevronRight,
+  Clock,
   Edit,
   Home,
   Pin,
   PinOff,
   ThumbsUp,
   Trash2,
-  User,
-  Clock
+  User
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";

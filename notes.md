@@ -203,8 +203,14 @@
    - 本次 Event 规则创建接口需要同时返回 `task_template_ids` 和 `filters[0].operator` 的错误
    - 稳定做法是先聚合 filter/time_rule/task_template 等所有业务校验错误，再统一返回 `{ message, field_errors }`
 4. 从 `git worktree` 直接执行发布脚本时，要先确认当前工作树下是否真的存在独立 `.venv`。
-   - 本次 `scripts/deploy_preview.sh` 默认调用 `${ROOT_DIR}/.venv/bin/pytest`，在 worktree 场景下会因为本地没有 `.venv` 直接失败
-   - 如果测试已经在主工作区或共享虚拟环境里完成，短期可用 `RUN_TESTS=0 ./scripts/deploy_preview.sh` 继续发布；更长期的做法是让脚本对 worktree 的共享环境有显式兜底
+   - 之前 `scripts/deploy_preview.sh` 默认调用 `${ROOT_DIR}/.venv/bin/pytest`，在 worktree 场景下会因为本地没有 `.venv` 直接失败
+   - 现在稳定做法是让脚本自动解析 `git` common dir：优先使用当前工作区 `.venv`，不存在时回退到主工作区共享 `.venv`；只有再找不到时才要求显式传 `LOCAL_PYTHON`
 5. 浏览器端在 HTTP 预览环境里不能默认假设 `crypto.randomUUID()` 可用。
    - 这次 Event 新建页点击“添加优先级/工单分类/风险分数/创建时间”时直接崩溃，根因是当前预览站点跑在非 HTTPS 安全上下文，`crypto.randomUUID` 不存在
    - 稳定做法是统一走本地 `createClientId` 这类兜底 helper：优先用 `globalThis.crypto?.randomUUID()`，不可用时回退到时间戳 + 计数器 + 随机串
+6. 预览部署脚本不能只假设“本地共享 `.venv` 已经和 `pyproject.toml` 同步”。
+   - 这次标准部署脚本虽然已经能自动找到主工作区共享 `.venv`，但第一步测试仍然因为该环境缺少 `python-socketio` 而失败
+   - 稳定做法是把 `pip install -e '.[dev]'` 也纳入标准部署流程，在本地测试前先同步一次虚拟环境，再进入测试和发布
+7. 在 Python 3.9 运行时，不要把 `str | None` 这类 PEP 604 联合类型直接放进 `typing.cast(...)` 之类会实际求值的表达式里。
+   - 这次 `tickets/service.py` 在 `type_cast(str | None, access.get(...))` 处触发了 `TypeError`
+   - 兼容做法是改用 `Optional[str]`，只把 `|` 联合语法留在注解位置，而不是运行时会执行的表达式里

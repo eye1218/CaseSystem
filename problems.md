@@ -145,3 +145,5 @@
 6. Event 新建页在远端 HTTP 预览环境点击“触发对象与过滤条件”的新增按钮时会触发 React Router 崩溃页，报错为 `crypto.randomUUID is not a function`。
    - 该问题来自页面用 `crypto.randomUUID()` 生成前端过滤条件临时 ID，而当前预览站点不是安全上下文，浏览器不会暴露这个 API
    - 已通过新增带回退逻辑的 `createClientId` helper 并替换 Event 编辑页里的直接调用修复
+7. 预览部署脚本补上 worktree 共享 `.venv` 回退后，首次标准部署仍会在本地测试阶段失败，因为共享环境虽然存在，但依赖未同步到最新 `pyproject.toml`，具体表现为 `ModuleNotFoundError: No module named 'socketio'`。
+8. 重新跑完整测试后，又暴露出 `tickets/service.py` 在 Python 3.9 下使用 `type_cast(str | None, ...)` 的运行时兼容性问题，多个工单详情接口会直接抛 `TypeError`。

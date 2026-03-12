@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
-from typing import cast as type_cast
+from typing import Optional, cast as type_cast
 
 from sqlalchemy import String, cast, func, select
 from sqlalchemy.orm import Session
@@ -491,7 +491,7 @@ def get_ticket_summary(
     access = type_cast(dict[str, object], entry["_access"])
     if not _actor_can_access_ticket(
         actor,
-        customer_user_id=type_cast(str | None, access.get("customer_user_id")),
+        customer_user_id=type_cast(Optional[str], access.get("customer_user_id")),
         is_deleted=bool(access.get("is_deleted")),
     ):
         return None
@@ -513,7 +513,7 @@ def get_ticket_detail(
     access = type_cast(dict[str, object], base["_access"])
     if not _actor_can_access_ticket(
         actor,
-        customer_user_id=type_cast(str | None, access.get("customer_user_id")),
+        customer_user_id=type_cast(Optional[str], access.get("customer_user_id")),
         is_deleted=bool(access.get("is_deleted")),
     ):
         return None
@@ -529,7 +529,7 @@ def get_ticket_live(
     access = type_cast(dict[str, object], base["_access"])
     if not _actor_can_access_ticket(
         actor,
-        customer_user_id=type_cast(str | None, access.get("customer_user_id")),
+        customer_user_id=type_cast(Optional[str], access.get("customer_user_id")),
         is_deleted=bool(access.get("is_deleted")),
     ):
         return None

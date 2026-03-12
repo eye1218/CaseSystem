@@ -266,6 +266,6 @@ class CsrfToken(Base):
 
 
 from .modules.tickets.models import Ticket, TicketAction, TicketComment
-from .modules.events.models import Event, EventBinding
+from .modules.events.models import Event, EventBinding, EventRule, EventRuleBinding
 from .modules.knowledge.models import KnowledgeArticle, KnowledgeArticleLike
 from .modules.realtime.models import UserNotification

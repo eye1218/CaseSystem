@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NPM_CACHE_DIR="${NPM_CACHE_DIR:-${ROOT_DIR}/.npm-cache}"
+LOCAL_PYTHON="${LOCAL_PYTHON:-}"
 
 REMOTE_HOST="${REMOTE_HOST:-192.168.2.170}"
 REMOTE_USER="${REMOTE_USER:-root}"
@@ -12,10 +13,56 @@ APP_PORT="${APP_PORT:-8010}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 RUN_TESTS="${RUN_TESTS:-1}"
 BUILD_FRONTEND="${BUILD_FRONTEND:-1}"
+SYNC_LOCAL_ENV="${SYNC_LOCAL_ENV:-1}"
+
+GIT_COMMON_DIR="$(git -C "${ROOT_DIR}" rev-parse --git-common-dir 2>/dev/null || true)"
+if [[ -n "${GIT_COMMON_DIR}" && "${GIT_COMMON_DIR}" != /* ]]; then
+  GIT_COMMON_DIR="$(cd "${ROOT_DIR}" && cd "${GIT_COMMON_DIR}" && pwd)"
+fi
+COMMON_WORKTREE_ROOT=""
+if [[ -n "${GIT_COMMON_DIR}" && -d "${GIT_COMMON_DIR}" ]]; then
+  COMMON_WORKTREE_ROOT="$(cd "${GIT_COMMON_DIR}/.." && pwd)"
+fi
+
+resolve_local_python() {
+  if [[ -n "${LOCAL_PYTHON}" ]]; then
+    if [[ -x "${LOCAL_PYTHON}" ]]; then
+      printf '%s\n' "${LOCAL_PYTHON}"
+      return 0
+    fi
+    echo "Configured LOCAL_PYTHON is not executable: ${LOCAL_PYTHON}" >&2
+    return 1
+  fi
+
+  local candidates=("${ROOT_DIR}/.venv/bin/python")
+  if [[ -n "${COMMON_WORKTREE_ROOT}" && "${COMMON_WORKTREE_ROOT}" != "${ROOT_DIR}" ]]; then
+    candidates+=("${COMMON_WORKTREE_ROOT}/.venv/bin/python")
+  fi
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  echo "Could not find a local virtualenv python for deployment checks." >&2
+  echo "Checked candidates:" >&2
+  printf '  - %s\n' "${candidates[@]}" >&2
+  echo "Set LOCAL_PYTHON=/abs/path/to/.venv/bin/python if your environment lives elsewhere." >&2
+  return 1
+}
 
 if [[ "${RUN_TESTS}" == "1" ]]; then
+  LOCAL_PYTHON_BIN="$(resolve_local_python)"
+  echo "==> Using local python: ${LOCAL_PYTHON_BIN}"
+  if [[ "${SYNC_LOCAL_ENV}" == "1" ]]; then
+    echo "==> Syncing local virtualenv dependencies"
+    "${LOCAL_PYTHON_BIN}" -m pip install -e '.[dev]'
+  fi
   echo "==> Running backend tests"
-  "${ROOT_DIR}/.venv/bin/pytest" backend/tests -q
+  "${LOCAL_PYTHON_BIN}" -m pytest backend/tests -q
 fi
 
 if [[ "${BUILD_FRONTEND}" == "1" ]]; then

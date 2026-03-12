@@ -40,6 +40,12 @@ export default function AppHeader() {
     if (location.pathname.startsWith("/tickets/")) {
       return "nav.tickets";
     }
+    if (location.pathname.startsWith("/knowledge")) {
+      return "nav.knowledge";
+    }
+    if (location.pathname.startsWith("/events")) {
+      return "nav.events";
+    }
     if (location.pathname.startsWith("/configuration")) {
       return "nav.configuration";
     }

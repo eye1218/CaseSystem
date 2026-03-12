@@ -96,7 +96,7 @@ export function hasMenuAccess(role: RoleCode, menuItem: string): boolean {
     T1: ["tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "reports"],
     T2: ["tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "reports", "kpi"],
     T3: ["tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "reports", "kpi"],
-    ADMIN: ["dashboard", "tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "reports", "kpi", "configuration", "users", "audit", "recycle"],
+    ADMIN: ["dashboard", "tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "events", "reports", "kpi", "configuration", "users", "audit", "recycle"],
     CUSTOMER: ["tickets", "reports", "notifications"]
   };
 

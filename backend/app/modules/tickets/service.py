@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
-from typing import cast as type_cast
+from typing import Optional, cast as type_cast
 
 from sqlalchemy import String, cast, func, select
 from sqlalchemy.orm import Session
@@ -33,11 +33,11 @@ from .support_data import (
 TICKET_EVENT_CREATED = "ticket.created"
 TICKET_EVENT_COMMENT_CREATED = "ticket.comment.created"
 TICKET_EVENT_UPDATED = "ticket.updated"
-TICKET_EVENT_RESPONDED = "ticket.responded"
-TICKET_EVENT_RESOLVED = "ticket.resolved"
+TICKET_EVENT_ASSIGNED = "ticket.assigned"
+TICKET_EVENT_STATUS_CHANGED = "ticket.status.changed"
 TICKET_EVENT_CLOSED = "ticket.closed"
 TICKET_EVENT_REOPENED = "ticket.reopened"
-TICKET_EVENT_ESCALATED_TO_POOL = "ticket.escalated.to_pool"
+TICKET_EVENT_ESCALATED = "ticket.escalated"
 TICKET_EVENT_RESPONSE_TIMEOUT = "ticket.response.timeout"
 TICKET_EVENT_RESOLUTION_TIMEOUT = "ticket.resolution.timeout"
 
@@ -491,7 +491,7 @@ def get_ticket_summary(
     access = type_cast(dict[str, object], entry["_access"])
     if not _actor_can_access_ticket(
         actor,
-        customer_user_id=type_cast(str | None, access.get("customer_user_id")),
+        customer_user_id=type_cast(Optional[str], access.get("customer_user_id")),
         is_deleted=bool(access.get("is_deleted")),
     ):
         return None
@@ -513,7 +513,7 @@ def get_ticket_detail(
     access = type_cast(dict[str, object], base["_access"])
     if not _actor_can_access_ticket(
         actor,
-        customer_user_id=type_cast(str | None, access.get("customer_user_id")),
+        customer_user_id=type_cast(Optional[str], access.get("customer_user_id")),
         is_deleted=bool(access.get("is_deleted")),
     ):
         return None
@@ -529,7 +529,7 @@ def get_ticket_live(
     access = type_cast(dict[str, object], base["_access"])
     if not _actor_can_access_ticket(
         actor,
-        customer_user_id=type_cast(str | None, access.get("customer_user_id")),
+        customer_user_id=type_cast(Optional[str], access.get("customer_user_id")),
         is_deleted=bool(access.get("is_deleted")),
     ):
         return None
@@ -819,7 +819,7 @@ def execute_ticket_action(
             from_status=previous_status,
             to_status=ticket.main_status,
         )
-        create_ticket_event(db, ticket_id=ticket.id, name=TICKET_EVENT_RESPONDED)
+        create_ticket_event(db, ticket_id=ticket.id, name=TICKET_EVENT_STATUS_CHANGED)
         cancel_pending_ticket_events(
             db, ticket_id=ticket.id, names=[TICKET_EVENT_RESPONSE_TIMEOUT]
         )
@@ -837,7 +837,7 @@ def execute_ticket_action(
             from_status=previous_status,
             to_status=ticket.main_status,
         )
-        create_ticket_event(db, ticket_id=ticket.id, name=TICKET_EVENT_RESOLVED)
+        create_ticket_event(db, ticket_id=ticket.id, name=TICKET_EVENT_STATUS_CHANGED)
         cancel_pending_ticket_events(
             db, ticket_id=ticket.id, names=[TICKET_EVENT_RESOLUTION_TIMEOUT]
         )
@@ -895,6 +895,7 @@ def execute_ticket_action(
             content=note or f"{actor.display_name} 已领取当前工单。",
             visibility="PUBLIC",
         )
+        create_ticket_event(db, ticket_id=ticket.id, name=TICKET_EVENT_ASSIGNED)
     elif action == "move_to_pool":
         _assert_internal_actor(actor)
         ticket.assigned_to = None
@@ -911,7 +912,7 @@ def execute_ticket_action(
             context={"pool": ticket.current_pool_code},
         )
         create_ticket_event(
-            db, ticket_id=ticket.id, name=TICKET_EVENT_ESCALATED_TO_POOL
+            db, ticket_id=ticket.id, name=TICKET_EVENT_ESCALATED
         )
     else:
         raise TicketOperationError(400, f"Unsupported action `{action}`")

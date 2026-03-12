@@ -2,10 +2,13 @@ from __future__ import annotations
 
 # pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportUntypedFunctionDecorator=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 
+from celery import group
+
 from ...security import utcnow
 from ...worker.celery_app import celery_app
 from ...worker.task_base import db_session
 from .service import (
+    dispatch_timeout_signal,
     list_due_pending_event_ids,
     trigger_due_pending_event_with_bindings,
 )
@@ -36,13 +39,47 @@ def sweep_due_events(batch_size: int = 100) -> dict[str, int]:
     for event_id in event_ids:
         with db_session() as db:
             triggered_event = trigger_due_pending_event_with_bindings(
-                db, event_id=event_id, due_at=due_at, triggered_at=due_at
+                db,
+                event_id=event_id,
+                due_at=due_at,
+                triggered_at=due_at,
             )
             if triggered_event is None:
                 skipped_count += 1
                 continue
 
-        _, bindings = triggered_event
+        event, bindings = triggered_event
+        if event.payload.get("kind") == "ticket_timeout_signal":
+            with db_session() as db:
+                try:
+                    immediate_dispatches = dispatch_timeout_signal(
+                        db,
+                        signal_event=event,
+                        occurred_at=due_at,
+                    )
+                    signatures = [
+                        celery_app.signature(
+                            "app.modules.events.tasks.dispatch_event_binding",
+                            kwargs={
+                                "event_id": created_event.id,
+                                "binding_id": binding.id,
+                                "task_template_id": binding.task_template_id,
+                                "payload": binding.payload,
+                            },
+                        )
+                        for created_event, created_bindings in immediate_dispatches
+                        for binding in created_bindings
+                    ]
+                    if signatures:
+                        group(signatures).apply_async()
+                        dispatched_count += len(signatures)
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    raise
+            claimed_count += 1
+            continue
+
         dispatched_count += len(bindings)
         claimed_count += 1
 

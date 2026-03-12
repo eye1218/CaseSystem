@@ -1,0 +1,14 @@
+import type { ReactNode } from "react";
+import { Navigate } from "react-router-dom";
+
+import { useAuth } from "../contexts/AuthContext";
+
+export default function RequireAdminRoute({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+
+  if (user?.active_role !== "ADMIN") {
+    return <Navigate to="/tickets" replace />;
+  }
+
+  return <>{children}</>;
+}

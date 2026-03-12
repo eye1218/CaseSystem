@@ -134,3 +134,16 @@
 1. 当前主工作区的 `/knowledge` 实际仍然指向占位页；此前完成的知识库实现只存在于另一个工作树，未同步回本仓库。
 2. 新增 `backend/app/modules/knowledge` 时，`__init__.py` 最初导出了 `knowledge_router`，导致运行时触发循环依赖：`app.models -> knowledge package -> routes -> auth -> app.models`。
 3. 本地浏览器 smoke test 还暴露出当前 `.venv` 环境缺少 `python-socketio` 运行时依赖；虽然 `pyproject.toml` 已声明该包，但现有虚拟环境里 `import socketio` 仍会失败，导致 `uvicorn app.main:app` 无法直接启动。
+
+## 2026-03-12 Event 模块补充开发
+
+1. 用户提供的是 Figma Make 文件链接而不是带 `node-id` 的普通设计稿链接，常规 `get_metadata` / `get_screenshot` 流程无法直接遍历 Event 页面层级。
+2. 当前可行路径是直接读取 Make 生成的源码资源，例如 `src/app/pages/Events.tsx`、`EventCreate.tsx`、`EventDetail.tsx`；如果只盯着节点截图，会被卡在“无法定位页面节点”。
+3. Event 规则创建接口初版校验逻辑会在首个错误处提前返回，导致前端一次提交拿不到完整字段错误集合；在这次开发里，这个问题具体表现为只能收到 `task_template_ids` 错误，拿不到非法 `filters[0].operator`。
+4. Event 编辑页初版 TypeScript 组装 payload 时遗漏了 timer 模式的 `mode: "timer"`，导致 `npx tsc --noEmit` 报类型不兼容；这类问题更适合先跑类型检查再看页面。
+5. 从 `codex-event-module` worktree 直接执行 `scripts/deploy_preview.sh` 时，本地发布阶段会因为缺少 `${ROOT_DIR}/.venv/bin/pytest` 而失败，说明当前脚本默认假设“每个工作树都有自己的虚拟环境”。
+6. Event 新建页在远端 HTTP 预览环境点击“触发对象与过滤条件”的新增按钮时会触发 React Router 崩溃页，报错为 `crypto.randomUUID is not a function`。
+   - 该问题来自页面用 `crypto.randomUUID()` 生成前端过滤条件临时 ID，而当前预览站点不是安全上下文，浏览器不会暴露这个 API
+   - 已通过新增带回退逻辑的 `createClientId` helper 并替换 Event 编辑页里的直接调用修复
+7. 预览部署脚本补上 worktree 共享 `.venv` 回退后，首次标准部署仍会在本地测试阶段失败，因为共享环境虽然存在，但依赖未同步到最新 `pyproject.toml`，具体表现为 `ModuleNotFoundError: No module named 'socketio'`。
+8. 重新跑完整测试后，又暴露出 `tickets/service.py` 在 Python 3.9 下使用 `type_cast(str | None, ...)` 的运行时兼容性问题，多个工单详情接口会直接抛 `TypeError`。

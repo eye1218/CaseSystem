@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from celery import group
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -11,16 +13,70 @@ from ...auth import ActorContext
 from ...enums import RoleCode
 from ...security import utcnow
 from ...worker.celery_app import celery_app
-from .enums import EventStatus, EventType
-from .models import Event, EventBinding
+from ..tickets.models import Ticket
+from ..tickets.seed_data import CATEGORY_NAMES
+from .enums import EventQueueStatus, EventQueueType, EventRuleStatus, EventRuleType
+from .models import Event, EventBinding, EventRule, EventRuleBinding
+
+
+TASK_TEMPLATE_LIBRARY: tuple[dict[str, str], ...] = (
+    {
+        "id": "tpl-001",
+        "name": "高优先级通知模板",
+        "description": "命中规则后通知值班分析师与管理员。",
+        "group": "notification",
+    },
+    {
+        "id": "tpl-002",
+        "name": "计时巡检模板",
+        "description": "按设定时间补发巡检与跟进任务。",
+        "group": "follow_up",
+    },
+    {
+        "id": "tpl-003",
+        "name": "超时升级模板",
+        "description": "响应或处置超时后创建升级任务。",
+        "group": "escalation",
+    },
+    {
+        "id": "tpl-004",
+        "name": "关闭复核模板",
+        "description": "工单关闭后触发收尾复核流程。",
+        "group": "review",
+    },
+)
+
+TASK_TEMPLATE_MAP = {item["id"]: item for item in TASK_TEMPLATE_LIBRARY}
+
+TRIGGER_POINT_LABELS: dict[str, str] = {
+    "ticket.created": "工单创建",
+    "ticket.updated": "工单更新",
+    "ticket.assigned": "工单被领取或分配",
+    "ticket.status.changed": "工单状态变更",
+    "ticket.response.timeout": "响应超时",
+    "ticket.resolution.timeout": "处置超时",
+    "ticket.closed": "工单关闭",
+    "ticket.reopened": "工单重开",
+    "ticket.escalated": "工单升级",
+    "ticket.escalation.rejected": "升级给指定人员被拒",
+    "ticket.escalation.accepted": "升级被接收",
+}
+
+SUPPORTED_FILTER_FIELDS = {"priority", "category", "risk_score", "created_at"}
+SUPPORTED_RULE_STATUSES = {
+    EventRuleStatus.DRAFT.value,
+    EventRuleStatus.ENABLED.value,
+    EventRuleStatus.DISABLED.value,
+}
+SUPPORTED_TIME_UNITS = {"minutes", "hours", "days"}
 
 
 class EventOperationError(Exception):
     status_code: int
-    detail: str
+    detail: Any
 
-    def __init__(self, status_code: int, detail: str):
-        super().__init__(detail)
+    def __init__(self, status_code: int, detail: Any):
+        super().__init__(str(detail))
         self.status_code = status_code
         self.detail = detail
 
@@ -30,27 +86,550 @@ def _require_admin_actor(actor: ActorContext) -> None:
         raise EventOperationError(403, "Admin role required")
 
 
-def _get_event_or_error(db: Session, event_id: str) -> Event:
-    event = db.scalar(select(Event).where(Event.id == event_id))
-    if event is None:
+def _ensure_rule_exists(db: Session, event_id: str) -> EventRule:
+    rule = db.scalar(select(EventRule).where(EventRule.id == event_id))
+    if rule is None:
         raise EventOperationError(404, "Event not found")
-    return event
+    return rule
 
 
-def _assert_pending_mutable(event: Event) -> None:
-    if event.status != EventStatus.PENDING.value:
-        raise EventOperationError(409, "Only pending events are mutable")
+def _ticket_related_object(ticket_id: int) -> str:
+    return f"ticket:{ticket_id}"
 
 
-def _build_detail(db: Session, event: Event) -> dict[str, object]:
-    bindings = list(
+def _coerce_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _timedelta_for(amount: int, unit: str) -> timedelta:
+    if unit == "minutes":
+        return timedelta(minutes=amount)
+    if unit == "hours":
+        return timedelta(hours=amount)
+    if unit == "days":
+        return timedelta(days=amount)
+    raise EventOperationError(422, f"Unsupported time unit `{unit}`")
+
+
+def _validation_error(field_errors: dict[str, str]) -> EventOperationError:
+    return EventOperationError(
+        422,
+        {
+            "message": "Validation failed",
+            "field_errors": field_errors,
+        },
+    )
+
+
+def _normalize_code(value: str | None, fallback_name: str | None) -> str:
+    if value and value.strip():
+        return value.strip()
+    base = (fallback_name or "event").strip().lower().replace(" ", "_")
+    base = "".join(char if char.isalnum() or char == "_" else "_" for char in base)
+    base = "_".join(filter(None, base.split("_")))[:48] or "event"
+    return f"evt_{base}_{uuid.uuid4().hex[:6]}"
+
+
+def _normalize_tags(raw_tags: Any) -> list[str]:
+    tags: list[str] = []
+    seen: set[str] = set()
+    for value in raw_tags or []:
+        tag = str(value).strip()
+        if not tag:
+            continue
+        if tag in seen:
+            continue
+        seen.add(tag)
+        tags.append(tag)
+    return tags
+
+
+def _normalize_filters(raw_filters: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    field_errors: dict[str, str] = {}
+    normalized: list[dict[str, Any]] = []
+
+    for index, item in enumerate(raw_filters):
+        field = str(item.get("field") or "").strip()
+        operator = str(item.get("operator") or "").strip()
+        if field not in SUPPORTED_FILTER_FIELDS:
+            field_errors[f"filters[{index}].field"] = "Unsupported filter field"
+            continue
+
+        if field in {"priority", "category"}:
+            if operator != "in":
+                field_errors[f"filters[{index}].operator"] = "Only `in` is supported"
+                continue
+            values = [str(value).strip() for value in item.get("values", []) if str(value).strip()]
+            if not values:
+                field_errors[f"filters[{index}].values"] = "At least one value is required"
+                continue
+            normalized.append({"field": field, "operator": "in", "values": values})
+            continue
+
+        if field == "risk_score":
+            if operator != "between":
+                field_errors[f"filters[{index}].operator"] = "Only `between` is supported"
+                continue
+            min_value = item.get("min_value")
+            max_value = item.get("max_value")
+            if not isinstance(min_value, int) or not isinstance(max_value, int):
+                field_errors[f"filters[{index}].range"] = "Risk score range is required"
+                continue
+            if min_value < 0 or max_value > 100 or min_value > max_value:
+                field_errors[f"filters[{index}].range"] = "Risk score must be within 0-100"
+                continue
+            normalized.append(
+                {
+                    "field": "risk_score",
+                    "operator": "between",
+                    "min_value": min_value,
+                    "max_value": max_value,
+                }
+            )
+            continue
+
+        if field == "created_at":
+            if operator != "between" or item.get("relative_time") is not None:
+                field_errors[f"filters[{index}].operator"] = "Created time only supports absolute ranges"
+                continue
+            start_at = _coerce_datetime(item.get("start_at"))
+            end_at = _coerce_datetime(item.get("end_at"))
+            if start_at is None or end_at is None:
+                field_errors[f"filters[{index}].range"] = "Absolute date range is required"
+                continue
+            if start_at > end_at:
+                field_errors[f"filters[{index}].range"] = "Start time must be before end time"
+                continue
+            normalized.append(
+                {
+                    "field": "created_at",
+                    "operator": "between",
+                    "start_at": start_at.isoformat(),
+                    "end_at": end_at.isoformat(),
+                }
+            )
+
+    if field_errors:
+        raise _validation_error(field_errors)
+    return normalized
+
+
+def _normalize_time_rule(event_type: str, raw_rule: dict[str, Any]) -> dict[str, Any]:
+    errors: dict[str, str] = {}
+
+    if event_type == EventRuleType.NORMAL.value:
+        mode = str(raw_rule.get("mode") or "").strip()
+        if mode not in {"immediate", "delayed"}:
+            errors["time_rule.mode"] = "Normal event only supports immediate or delayed"
+        elif mode == "immediate":
+            return {"mode": "immediate"}
+        else:
+            delay_amount = raw_rule.get("delay_amount")
+            delay_unit = str(raw_rule.get("delay_unit") or "").strip()
+            if not isinstance(delay_amount, int) or delay_amount <= 0:
+                errors["time_rule.delay_amount"] = "Delay amount must be a positive integer"
+            if delay_unit not in SUPPORTED_TIME_UNITS:
+                errors["time_rule.delay_unit"] = "Unsupported delay unit"
+            if errors:
+                raise _validation_error(errors)
+            return {
+                "mode": "delayed",
+                "delay_amount": delay_amount,
+                "delay_unit": delay_unit,
+            }
+
+    if event_type == EventRuleType.TIMER.value:
+        target_offset_amount = raw_rule.get("target_offset_amount")
+        target_offset_unit = str(raw_rule.get("target_offset_unit") or "").strip()
+        adjustment_direction = str(raw_rule.get("adjustment_direction") or "after").strip()
+        adjustment_amount = raw_rule.get("adjustment_amount", 0)
+        adjustment_unit = str(raw_rule.get("adjustment_unit") or target_offset_unit).strip()
+        if not isinstance(target_offset_amount, int) or target_offset_amount <= 0:
+            errors["time_rule.target_offset_amount"] = "Target offset must be a positive integer"
+        if target_offset_unit not in SUPPORTED_TIME_UNITS:
+            errors["time_rule.target_offset_unit"] = "Unsupported target offset unit"
+        if adjustment_direction not in {"before", "after"}:
+            errors["time_rule.adjustment_direction"] = "Adjustment direction must be before or after"
+        if not isinstance(adjustment_amount, int) or adjustment_amount < 0:
+            errors["time_rule.adjustment_amount"] = "Adjustment amount must be a non-negative integer"
+        if adjustment_unit not in SUPPORTED_TIME_UNITS:
+            errors["time_rule.adjustment_unit"] = "Unsupported adjustment unit"
+        if errors:
+            raise _validation_error(errors)
+        return {
+            "mode": "timer",
+            "target_offset_amount": target_offset_amount,
+            "target_offset_unit": target_offset_unit,
+            "adjustment_direction": adjustment_direction,
+            "adjustment_amount": adjustment_amount,
+            "adjustment_unit": adjustment_unit,
+        }
+
+    errors["event_type"] = "Unsupported event type"
+    raise _validation_error(errors)
+
+
+def _normalize_rule_payload(data: dict[str, Any]) -> dict[str, Any]:
+    field_errors: dict[str, str] = {}
+
+    name = str(data.get("name") or "").strip()
+    if not name:
+        field_errors["name"] = "Event name is required"
+
+    event_type = str(data.get("event_type") or "").strip()
+    if event_type not in {EventRuleType.NORMAL.value, EventRuleType.TIMER.value}:
+        field_errors["event_type"] = "Unsupported event type"
+
+    status = str(data.get("status") or "").strip()
+    if status not in SUPPORTED_RULE_STATUSES:
+        field_errors["status"] = "Unsupported rule status"
+
+    trigger_point = str(data.get("trigger_point") or "").strip()
+    if trigger_point not in TRIGGER_POINT_LABELS:
+        field_errors["trigger_point"] = "Unsupported trigger point"
+
+    task_template_ids = [
+        str(item).strip() for item in data.get("task_template_ids", []) if str(item).strip()
+    ]
+    task_template_ids = list(dict.fromkeys(task_template_ids))
+    if not task_template_ids:
+        field_errors["task_template_ids"] = "At least one task template is required"
+    elif any(task_template_id not in TASK_TEMPLATE_MAP for task_template_id in task_template_ids):
+        field_errors["task_template_ids"] = "One or more task templates do not exist"
+
+    normalized_filters: list[dict[str, Any]] = []
+    try:
+        normalized_filters = _normalize_filters([dict(item) for item in data.get("filters", [])])
+    except EventOperationError as exc:
+        if isinstance(exc.detail, dict):
+            field_errors.update(dict(exc.detail.get("field_errors", {})))
+        else:
+            raise
+
+    normalized_time_rule: dict[str, Any] = {}
+    if event_type in {EventRuleType.NORMAL.value, EventRuleType.TIMER.value}:
+        try:
+            normalized_time_rule = _normalize_time_rule(
+                event_type,
+                dict(data.get("time_rule", {})),
+            )
+        except EventOperationError as exc:
+            if isinstance(exc.detail, dict):
+                field_errors.update(dict(exc.detail.get("field_errors", {})))
+            else:
+                raise
+
+    if field_errors:
+        raise _validation_error(field_errors)
+
+    return {
+        "name": name,
+        "code": _normalize_code(data.get("code"), name),
+        "event_type": event_type,
+        "status": status,
+        "trigger_point": trigger_point,
+        "object_type": "ticket",
+        "description": str(data.get("description") or "").strip() or None,
+        "tags": _normalize_tags(data.get("tags")),
+        "filters": normalized_filters,
+        "time_rule": normalized_time_rule,
+        "task_template_ids": task_template_ids,
+    }
+
+
+def _ensure_unique_code(db: Session, code: str, *, exclude_rule_id: str | None = None) -> None:
+    existing = db.scalar(select(EventRule).where(EventRule.code == code))
+    if existing is None:
+        return
+    if exclude_rule_id is not None and existing.id == exclude_rule_id:
+        return
+    raise EventOperationError(409, "Event code already exists")
+
+
+def _bound_task_payload(task_template_id: str) -> dict[str, str]:
+    item = TASK_TEMPLATE_MAP[task_template_id]
+    return {
+        "id": item["id"],
+        "name": item["name"],
+        "description": item["description"],
+        "group": item["group"],
+    }
+
+
+def _serialize_bound_tasks(task_template_ids: list[str]) -> list[dict[str, str]]:
+    return [_bound_task_payload(task_template_id) for task_template_id in task_template_ids]
+
+
+def _trigger_summary(trigger_point: str, event_type: str, time_rule: dict[str, Any]) -> str:
+    trigger_label = TRIGGER_POINT_LABELS.get(trigger_point, trigger_point)
+    if event_type == EventRuleType.NORMAL.value:
+        if time_rule.get("mode") == "immediate":
+            return f"在{trigger_label}时立即触发"
+        return (
+            f"在{trigger_label}后延迟 {time_rule['delay_amount']} "
+            f"{time_rule['delay_unit']} 触发"
+        )
+
+    return (
+        "基于工单创建时间 + "
+        f"{time_rule['target_offset_amount']} {time_rule['target_offset_unit']}，"
+        f"并{('提前' if time_rule['adjustment_direction'] == 'before' else '延后')}"
+        f" {time_rule['adjustment_amount']} {time_rule['adjustment_unit']} 触发"
+    )
+
+
+def _filter_summary(filters: list[dict[str, Any]]) -> str:
+    if not filters:
+        return "不限制工单条件"
+
+    parts: list[str] = []
+    for item in filters:
+        if item["field"] == "priority":
+            parts.append(f"优先级 in {', '.join(item['values'])}")
+        elif item["field"] == "category":
+            values = [CATEGORY_NAMES.get(value, value) for value in item["values"]]
+            parts.append(f"工单分类 in {', '.join(values)}")
+        elif item["field"] == "risk_score":
+            parts.append(f"风险分数 {item['min_value']} - {item['max_value']}")
+        elif item["field"] == "created_at":
+            parts.append(f"创建时间 {item['start_at']} 至 {item['end_at']}")
+    return " 且 ".join(parts)
+
+
+def _task_template_ids_for_rule(db: Session, rule_id: str) -> list[str]:
+    return list(
         db.scalars(
-            select(EventBinding)
-            .where(EventBinding.event_id == event.id)
-            .order_by(EventBinding.created_at)
+            select(EventRuleBinding.task_template_id)
+            .where(EventRuleBinding.event_rule_id == rule_id)
+            .order_by(EventRuleBinding.created_at.asc())
         ).all()
     )
-    return {"event": event, "bindings": bindings}
+
+
+def _rule_detail(db: Session, rule: EventRule) -> dict[str, Any]:
+    task_template_ids = _task_template_ids_for_rule(db, rule.id)
+    return {
+        "id": rule.id,
+        "name": rule.name,
+        "code": rule.code,
+        "event_type": rule.event_type,
+        "status": rule.status,
+        "trigger_point": rule.trigger_point,
+        "object_type": rule.object_type,
+        "description": rule.description,
+        "tags": list(rule.tags or []),
+        "filters": list(rule.filter_config or []),
+        "time_rule": dict(rule.time_rule_config or {}),
+        "bound_tasks": _serialize_bound_tasks(task_template_ids),
+        "filter_summary": _filter_summary(list(rule.filter_config or [])),
+        "trigger_summary": _trigger_summary(
+            rule.trigger_point,
+            rule.event_type,
+            dict(rule.time_rule_config or {}),
+        ),
+        "created_at": rule.created_at,
+        "created_by": rule.created_by_name,
+        "updated_at": rule.updated_at,
+        "updated_by": rule.updated_by_name,
+    }
+
+
+def _rule_summary(db: Session, rule: EventRule) -> dict[str, Any]:
+    detail = _rule_detail(db, rule)
+    return {
+        "id": detail["id"],
+        "name": detail["name"],
+        "code": detail["code"],
+        "event_type": detail["event_type"],
+        "status": detail["status"],
+        "trigger_point": detail["trigger_point"],
+        "description": detail["description"],
+        "tags": detail["tags"],
+        "task_template_count": len(detail["bound_tasks"]),
+        "filter_summary": detail["filter_summary"],
+        "trigger_summary": detail["trigger_summary"],
+        "updated_at": detail["updated_at"],
+        "updated_by": detail["updated_by"],
+    }
+
+
+def list_task_templates(actor: ActorContext) -> list[dict[str, str]]:
+    _require_admin_actor(actor)
+    return [dict(item) for item in TASK_TEMPLATE_LIBRARY]
+
+
+def create_event_rule(
+    db: Session,
+    actor: ActorContext,
+    *,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    _require_admin_actor(actor)
+    normalized = _normalize_rule_payload(payload)
+    _ensure_unique_code(db, normalized["code"])
+
+    now = utcnow()
+    rule = EventRule(
+        name=normalized["name"],
+        code=normalized["code"],
+        event_type=normalized["event_type"],
+        status=normalized["status"],
+        trigger_point=normalized["trigger_point"],
+        object_type=normalized["object_type"],
+        description=normalized["description"],
+        tags=normalized["tags"],
+        filter_config=normalized["filters"],
+        time_rule_config=normalized["time_rule"],
+        created_by_user_id=actor.user_id,
+        created_by_name=actor.display_name,
+        updated_by_user_id=actor.user_id,
+        updated_by_name=actor.display_name,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(rule)
+    db.flush()
+
+    for task_template_id in normalized["task_template_ids"]:
+        db.add(
+            EventRuleBinding(
+                event_rule_id=rule.id,
+                task_template_id=task_template_id,
+            )
+        )
+
+    db.commit()
+    db.refresh(rule)
+    return _rule_detail(db, rule)
+
+
+def list_event_rules(
+    db: Session,
+    actor: ActorContext,
+    *,
+    search: str | None = None,
+    event_type: str | None = None,
+    status: str | None = None,
+    trigger_point: str | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    _require_admin_actor(actor)
+
+    conditions: list[ColumnElement[bool]] = []
+    if search:
+        pattern = f"%{search.strip()}%"
+        conditions.append(or_(EventRule.name.like(pattern), EventRule.code.like(pattern)))
+    if event_type:
+        conditions.append(EventRule.event_type == event_type)
+    if status:
+        conditions.append(EventRule.status == status)
+    if trigger_point:
+        conditions.append(EventRule.trigger_point == trigger_point)
+
+    total_count = (
+        db.scalar(select(func.count()).select_from(EventRule).where(*conditions)) or 0
+    )
+    rules = list(
+        db.scalars(
+            select(EventRule).where(*conditions).order_by(EventRule.updated_at.desc())
+        ).all()
+    )
+    return ([_rule_summary(db, rule) for rule in rules], total_count)
+
+
+def get_event_rule(db: Session, actor: ActorContext, event_id: str) -> dict[str, Any]:
+    _require_admin_actor(actor)
+    rule = _ensure_rule_exists(db, event_id)
+    return _rule_detail(db, rule)
+
+
+def update_event_rule(
+    db: Session,
+    actor: ActorContext,
+    *,
+    event_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    _require_admin_actor(actor)
+    rule = _ensure_rule_exists(db, event_id)
+
+    merged_payload = {
+        "name": rule.name,
+        "code": rule.code,
+        "event_type": rule.event_type,
+        "status": rule.status,
+        "trigger_point": rule.trigger_point,
+        "description": rule.description,
+        "tags": list(rule.tags or []),
+        "filters": list(rule.filter_config or []),
+        "time_rule": dict(rule.time_rule_config or {}),
+        "task_template_ids": _task_template_ids_for_rule(db, rule.id),
+    }
+    merged_payload.update(payload)
+
+    normalized = _normalize_rule_payload(merged_payload)
+    _ensure_unique_code(db, normalized["code"], exclude_rule_id=rule.id)
+
+    rule.name = normalized["name"]
+    rule.code = normalized["code"]
+    rule.event_type = normalized["event_type"]
+    rule.status = normalized["status"]
+    rule.trigger_point = normalized["trigger_point"]
+    rule.object_type = normalized["object_type"]
+    rule.description = normalized["description"]
+    rule.tags = normalized["tags"]
+    rule.filter_config = normalized["filters"]
+    rule.time_rule_config = normalized["time_rule"]
+    rule.updated_by_user_id = actor.user_id
+    rule.updated_by_name = actor.display_name
+    rule.updated_at = utcnow()
+
+    db.query(EventRuleBinding).filter(EventRuleBinding.event_rule_id == rule.id).delete()
+    for task_template_id in normalized["task_template_ids"]:
+        db.add(
+            EventRuleBinding(
+                event_rule_id=rule.id,
+                task_template_id=task_template_id,
+            )
+        )
+
+    db.commit()
+    db.refresh(rule)
+    return _rule_detail(db, rule)
+
+
+def update_event_rule_status(
+    db: Session,
+    actor: ActorContext,
+    *,
+    event_id: str,
+    status: str,
+) -> dict[str, Any]:
+    _require_admin_actor(actor)
+    rule = _ensure_rule_exists(db, event_id)
+    if status not in {EventRuleStatus.ENABLED.value, EventRuleStatus.DISABLED.value}:
+        raise EventOperationError(422, "Unsupported target status")
+    if rule.status == status:
+        return _rule_detail(db, rule)
+
+    rule.status = status
+    rule.updated_by_user_id = actor.user_id
+    rule.updated_by_name = actor.display_name
+    rule.updated_at = utcnow()
+    db.commit()
+    db.refresh(rule)
+    return _rule_detail(db, rule)
+
+
+def delete_event_rule(db: Session, actor: ActorContext, *, event_id: str) -> None:
+    _require_admin_actor(actor)
+    rule = _ensure_rule_exists(db, event_id)
+    db.query(EventRuleBinding).filter(EventRuleBinding.event_rule_id == rule.id).delete()
+    db.delete(rule)
+    db.commit()
 
 
 def list_due_pending_event_ids(
@@ -60,7 +639,7 @@ def list_due_pending_event_ids(
         db.scalars(
             select(Event.id)
             .where(
-                Event.status == EventStatus.PENDING.value,
+                Event.status == EventQueueStatus.PENDING.value,
                 Event.trigger_time.is_not(None),
                 Event.trigger_time <= due_at,
             )
@@ -68,30 +647,6 @@ def list_due_pending_event_ids(
             .limit(limit)
         ).all()
     )
-
-
-def get_due_pending_event_with_bindings(
-    db: Session, *, event_id: str, due_at: datetime
-) -> tuple[Event, list[EventBinding]] | None:
-    event = db.scalar(
-        select(Event).where(
-            Event.id == event_id,
-            Event.status == EventStatus.PENDING.value,
-            Event.trigger_time.is_not(None),
-            Event.trigger_time <= due_at,
-        )
-    )
-    if event is None:
-        return None
-
-    bindings = list(
-        db.scalars(
-            select(EventBinding)
-            .where(EventBinding.event_id == event.id)
-            .order_by(EventBinding.created_at)
-        ).all()
-    )
-    return event, bindings
 
 
 def claim_due_pending_event_with_bindings(
@@ -106,12 +661,12 @@ def claim_due_pending_event_with_bindings(
         update(Event)
         .where(
             Event.id == event_id,
-            Event.status == EventStatus.PENDING.value,
+            Event.status == EventQueueStatus.PENDING.value,
             Event.trigger_time.is_not(None),
             Event.trigger_time <= due_at,
         )
         .values(
-            status=EventStatus.TRIGGERED.value,
+            status=EventQueueStatus.TRIGGERED.value,
             triggered_at=triggered_at,
             updated_at=triggered_at,
         )
@@ -129,7 +684,7 @@ def claim_due_pending_event_with_bindings(
         db.scalars(
             select(EventBinding)
             .where(EventBinding.event_id == event.id)
-            .order_by(EventBinding.created_at)
+            .order_by(EventBinding.created_at.asc())
         ).all()
     )
     if commit:
@@ -180,108 +735,221 @@ def trigger_due_pending_event_with_bindings(
     return event, bindings
 
 
-def mark_event_triggered(event: Event, *, triggered_at: datetime) -> None:
-    event.status = EventStatus.TRIGGERED.value
-    event.triggered_at = triggered_at
-    event.updated_at = triggered_at
+def _event_rule_task_template_ids(db: Session, rule_id: str) -> list[str]:
+    return _task_template_ids_for_rule(db, rule_id)
 
 
-def _ticket_related_object(ticket_id: int) -> str:
-    return f"ticket:{ticket_id}"
+def _compute_dispatch_time(
+    *,
+    rule: EventRule,
+    ticket: Ticket,
+    occurred_at: datetime,
+) -> datetime:
+    time_rule = dict(rule.time_rule_config or {})
+    if rule.event_type == EventRuleType.NORMAL.value:
+        if time_rule.get("mode") == "immediate":
+            return occurred_at
+        return occurred_at + _timedelta_for(
+            int(time_rule["delay_amount"]),
+            str(time_rule["delay_unit"]),
+        )
+
+    target_time = ticket.created_at + _timedelta_for(
+        int(time_rule["target_offset_amount"]),
+        str(time_rule["target_offset_unit"]),
+    )
+    adjustment = _timedelta_for(
+        int(time_rule.get("adjustment_amount") or 0),
+        str(time_rule["adjustment_unit"]),
+    )
+    if time_rule["adjustment_direction"] == "before":
+        target_time = target_time - adjustment
+    else:
+        target_time = target_time + adjustment
+    return target_time
 
 
-def _ticket_event_payload(
-    *, name: str, related_object: str, tags: list[str] | None = None
-) -> dict[str, object]:
-    return {
-        "name": name,
-        "related_object": related_object,
-        "tags": list(tags or []),
-    }
+def _matches_filter(ticket: Ticket, item: dict[str, Any]) -> bool:
+    field = item["field"]
+    if field == "priority":
+        return ticket.priority in item["values"]
+    if field == "category":
+        return ticket.category_id in item["values"]
+    if field == "risk_score":
+        return item["min_value"] <= ticket.risk_score <= item["max_value"]
+    if field == "created_at":
+        start_at = _coerce_datetime(datetime.fromisoformat(item["start_at"]))
+        end_at = _coerce_datetime(datetime.fromisoformat(item["end_at"]))
+        created_at = _coerce_datetime(ticket.created_at)
+        assert start_at is not None and end_at is not None and created_at is not None
+        return start_at <= created_at <= end_at
+    return False
 
 
-def _ticket_event_name(event: Event) -> str | None:
-    event_name = getattr(event, "name", None)
-    if isinstance(event_name, str):
-        return event_name
-    if isinstance(event.title, str):
-        return event.title
-    payload_name = event.payload.get("name")
-    if isinstance(payload_name, str):
-        return payload_name
-    return None
+def _matches_rule(ticket: Ticket, rule: EventRule) -> bool:
+    filters = list(rule.filter_config or [])
+    return all(_matches_filter(ticket, item) for item in filters)
 
 
-def _ticket_event_related_object(event: Event) -> str | None:
-    event_related_object = getattr(event, "related_object", None)
-    if isinstance(event_related_object, str):
-        return event_related_object
-    payload_related_object = event.payload.get("related_object")
-    if isinstance(payload_related_object, str):
-        return payload_related_object
-    return None
+def _queue_dispatch_event(
+    db: Session,
+    *,
+    rule: EventRule,
+    ticket: Ticket,
+    trigger_point: str,
+    trigger_time: datetime,
+    queue_status: str = EventQueueStatus.PENDING.value,
+    triggered_at: datetime | None = None,
+) -> tuple[Event, list[EventBinding]]:
+    now = utcnow()
+    event = Event(
+        event_type=(
+            EventQueueType.INSTANT.value
+            if trigger_time <= now
+            else EventQueueType.TIMED.value
+        ),
+        status=queue_status,
+        trigger_time=trigger_time,
+        title=rule.name,
+        description=rule.description,
+        payload={
+            "kind": "event_rule_dispatch",
+            "rule_id": rule.id,
+            "rule_code": rule.code,
+            "rule_name": rule.name,
+            "ticket_id": ticket.id,
+            "related_object": _ticket_related_object(ticket.id),
+            "trigger_point": trigger_point,
+        },
+        created_by_user_id=rule.updated_by_user_id,
+        triggered_at=triggered_at,
+        created_at=now,
+        updated_at=triggered_at or now,
+    )
+    db.add(event)
+    db.flush()
+
+    bindings: list[EventBinding] = []
+    for task_template_id in _event_rule_task_template_ids(db, rule.id):
+        binding = EventBinding(
+            event_id=event.id,
+            task_template_id=task_template_id,
+            payload={
+                "kind": "event_rule_dispatch",
+                "rule_id": rule.id,
+                "rule_code": rule.code,
+                "ticket_id": ticket.id,
+                "trigger_point": trigger_point,
+                "task_template_id": task_template_id,
+            },
+            created_at=now,
+        )
+        db.add(binding)
+        bindings.append(binding)
+
+    return event, bindings
+
+
+def _load_ticket(db: Session, ticket_id: int) -> Ticket | None:
+    return db.scalar(select(Ticket).where(Ticket.id == ticket_id, Ticket.is_deleted.is_(False)))
+
+
+def queue_matching_ticket_rules(
+    db: Session,
+    *,
+    ticket: Ticket,
+    trigger_point: str,
+    occurred_at: datetime | None = None,
+    dispatch_immediate: bool = False,
+) -> list[tuple[Event, list[EventBinding]]]:
+    effective_occurred_at = occurred_at or utcnow()
+    rules = list(
+        db.scalars(
+            select(EventRule).where(
+                EventRule.status == EventRuleStatus.ENABLED.value,
+                EventRule.trigger_point == trigger_point,
+            )
+        ).all()
+    )
+
+    created: list[tuple[Event, list[EventBinding]]] = []
+    for rule in rules:
+        if not _matches_rule(ticket, rule):
+            continue
+        trigger_time = _compute_dispatch_time(
+            rule=rule,
+            ticket=ticket,
+            occurred_at=effective_occurred_at,
+        )
+        if dispatch_immediate and trigger_time <= effective_occurred_at:
+            created.append(
+                _queue_dispatch_event(
+                    db,
+                    rule=rule,
+                    ticket=ticket,
+                    trigger_point=trigger_point,
+                    trigger_time=effective_occurred_at,
+                    queue_status=EventQueueStatus.TRIGGERED.value,
+                    triggered_at=effective_occurred_at,
+                )
+            )
+        else:
+            created.append(
+                _queue_dispatch_event(
+                    db,
+                    rule=rule,
+                    ticket=ticket,
+                    trigger_point=trigger_point,
+                    trigger_time=trigger_time,
+                )
+            )
+    return created
 
 
 def create_ticket_event(
-    db: Session, *, ticket_id: int, name: str, tags: list[str] | None = None
-) -> None:
-    now = utcnow()
-    related_object = _ticket_related_object(ticket_id)
-    normalized_tags = list(tags or [])
-    payload = _ticket_event_payload(
-        name=name,
-        related_object=related_object,
-        tags=normalized_tags,
-    )
-    event_kwargs: dict[str, object] = {
-        "event_type": EventType.INSTANT.value,
-        "status": EventStatus.PENDING.value,
-        "trigger_time": now,
-        "title": name,
-        "description": None,
-        "payload": payload,
-        "created_by_user_id": None,
-        "created_at": now,
-        "updated_at": now,
-    }
-    if hasattr(Event, "name"):
-        event_kwargs["name"] = name
-    if hasattr(Event, "related_object"):
-        event_kwargs["related_object"] = related_object
-    if hasattr(Event, "tags"):
-        event_kwargs["tags"] = normalized_tags
-    db.add(Event(**event_kwargs))
-
-
-def _create_ticket_timeout_event(
     db: Session,
     *,
     ticket_id: int,
     name: str,
+    occurred_at: datetime | None = None,
+) -> None:
+    ticket = _load_ticket(db, ticket_id)
+    if ticket is None:
+        return
+    queue_matching_ticket_rules(
+        db,
+        ticket=ticket,
+        trigger_point=name,
+        occurred_at=occurred_at or utcnow(),
+    )
+
+
+def _create_ticket_timeout_signal(
+    db: Session,
+    *,
+    ticket_id: int,
+    trigger_point: str,
     trigger_time: datetime,
-    tags: list[str],
 ) -> None:
     now = utcnow()
-    related_object = _ticket_related_object(ticket_id)
-    payload = _ticket_event_payload(name=name, related_object=related_object, tags=tags)
-    event_kwargs: dict[str, object] = {
-        "event_type": EventType.TIMED.value,
-        "status": EventStatus.PENDING.value,
-        "trigger_time": trigger_time,
-        "title": name,
-        "description": None,
-        "payload": payload,
-        "created_by_user_id": None,
-        "created_at": now,
-        "updated_at": now,
-    }
-    if hasattr(Event, "name"):
-        event_kwargs["name"] = name
-    if hasattr(Event, "related_object"):
-        event_kwargs["related_object"] = related_object
-    if hasattr(Event, "tags"):
-        event_kwargs["tags"] = tags
-    db.add(Event(**event_kwargs))
+    db.add(
+        Event(
+            event_type=EventQueueType.TIMED.value,
+            status=EventQueueStatus.PENDING.value,
+            trigger_time=trigger_time,
+            title=trigger_point,
+            description=None,
+            payload={
+                "kind": "ticket_timeout_signal",
+                "ticket_id": ticket_id,
+                "related_object": _ticket_related_object(ticket_id),
+                "trigger_point": trigger_point,
+            },
+            created_by_user_id=None,
+            created_at=now,
+            updated_at=now,
+        )
+    )
 
 
 def create_ticket_timeout_events(
@@ -292,21 +960,19 @@ def create_ticket_timeout_events(
     resolution_deadline_at: datetime | None,
 ) -> None:
     if response_deadline_at is not None:
-        _create_ticket_timeout_event(
+        _create_ticket_timeout_signal(
             db,
             ticket_id=ticket_id,
-            name="ticket.response.timeout",
+            trigger_point="ticket.response.timeout",
             trigger_time=response_deadline_at,
-            tags=["ticket", "sla", "timeout", "response"],
         )
 
     if resolution_deadline_at is not None:
-        _create_ticket_timeout_event(
+        _create_ticket_timeout_signal(
             db,
             ticket_id=ticket_id,
-            name="ticket.resolution.timeout",
+            trigger_point="ticket.resolution.timeout",
             trigger_time=resolution_deadline_at,
-            tags=["ticket", "sla", "timeout", "resolution"],
         )
 
 
@@ -317,184 +983,40 @@ def cancel_pending_ticket_events(
         return
 
     now = utcnow()
-    related_object = _ticket_related_object(ticket_id)
-    target_names = set(names)
-    events = list(
-        db.scalars(
-            select(Event).where(
-                Event.status == EventStatus.PENDING.value,
-            )
-        ).all()
-    )
-    for event in events:
-        if _ticket_event_related_object(event) != related_object:
+    for event in db.scalars(
+        select(Event).where(Event.status == EventQueueStatus.PENDING.value)
+    ).all():
+        if event.payload.get("kind") != "ticket_timeout_signal":
             continue
-        event_name = _ticket_event_name(event)
-        if event_name not in target_names:
+        if event.payload.get("ticket_id") != ticket_id:
             continue
-        event.status = EventStatus.CANCELLED.value
+        if event.payload.get("trigger_point") not in set(names):
+            continue
+        event.status = EventQueueStatus.CANCELLED.value
         event.cancelled_at = now
         event.updated_at = now
 
 
-def create_event(
+def dispatch_timeout_signal(
     db: Session,
-    actor: ActorContext,
     *,
-    event_type: str,
-    trigger_time: datetime | None,
-    title: str | None,
-    description: str | None,
-    payload: dict[str, object] | None,
-) -> dict[str, object]:
-    _require_admin_actor(actor)
+    signal_event: Event,
+    occurred_at: datetime,
+) -> list[tuple[Event, list[EventBinding]]]:
+    ticket_id = signal_event.payload.get("ticket_id")
+    trigger_point = signal_event.payload.get("trigger_point")
+    if not isinstance(ticket_id, int) or not isinstance(trigger_point, str):
+        return []
 
-    if event_type not in {EventType.INSTANT.value, EventType.TIMED.value}:
-        raise EventOperationError(422, "Unsupported event type")
+    ticket = _load_ticket(db, ticket_id)
+    if ticket is None:
+        return []
 
-    now = utcnow()
-    if event_type == EventType.TIMED.value and trigger_time is None:
-        raise EventOperationError(422, "trigger_time is required for timed events")
-
-    normalized_trigger_time = trigger_time
-    if event_type == EventType.INSTANT.value:
-        normalized_trigger_time = now
-
-    event = Event(
-        event_type=event_type,
-        status=EventStatus.PENDING.value,
-        trigger_time=normalized_trigger_time,
-        title=title,
-        description=description,
-        payload=payload or {},
-        created_by_user_id=actor.user_id,
-        created_at=now,
-        updated_at=now,
+    created = queue_matching_ticket_rules(
+        db,
+        ticket=ticket,
+        trigger_point=trigger_point,
+        occurred_at=occurred_at,
+        dispatch_immediate=True,
     )
-    db.add(event)
-    db.commit()
-    db.refresh(event)
-    return _build_detail(db, event)
-
-
-def list_events(
-    db: Session,
-    actor: ActorContext,
-    *,
-    status: str | None = None,
-    event_type: str | None = None,
-) -> tuple[list[Event], int]:
-    _require_admin_actor(actor)
-
-    conditions: list[ColumnElement[bool]] = []
-    if status:
-        conditions.append(Event.status == status)
-    if event_type:
-        conditions.append(Event.event_type == event_type)
-
-    total_count = (
-        db.scalar(select(func.count()).select_from(Event).where(*conditions)) or 0
-    )
-    items = list(
-        db.scalars(
-            select(Event).where(*conditions).order_by(Event.created_at.desc())
-        ).all()
-    )
-    return items, total_count
-
-
-def get_event(db: Session, actor: ActorContext, event_id: str) -> dict[str, object]:
-    _require_admin_actor(actor)
-    event = _get_event_or_error(db, event_id)
-    return _build_detail(db, event)
-
-
-def bind_event_task(
-    db: Session,
-    actor: ActorContext,
-    *,
-    event_id: str,
-    task_template_id: str,
-    payload: dict[str, object] | None,
-) -> dict[str, object]:
-    _require_admin_actor(actor)
-    event = _get_event_or_error(db, event_id)
-    _assert_pending_mutable(event)
-
-    binding = EventBinding(
-        event_id=event.id,
-        task_template_id=task_template_id,
-        payload=payload or {},
-    )
-    db.add(binding)
-    event.updated_at = utcnow()
-    db.commit()
-    db.refresh(event)
-    return _build_detail(db, event)
-
-
-def cancel_event(db: Session, actor: ActorContext, event_id: str) -> dict[str, object]:
-    _require_admin_actor(actor)
-    event = _get_event_or_error(db, event_id)
-    _assert_pending_mutable(event)
-
-    now = utcnow()
-    event.status = EventStatus.CANCELLED.value
-    event.cancelled_at = now
-    event.updated_at = now
-    db.commit()
-    db.refresh(event)
-    return _build_detail(db, event)
-
-
-def reschedule_event(
-    db: Session,
-    actor: ActorContext,
-    *,
-    event_id: str,
-    trigger_time: datetime,
-) -> dict[str, object]:
-    _require_admin_actor(actor)
-    event = _get_event_or_error(db, event_id)
-    _assert_pending_mutable(event)
-
-    if event.event_type != EventType.TIMED.value:
-        raise EventOperationError(409, "Only timed pending events can be rescheduled")
-
-    event.trigger_time = trigger_time
-    event.updated_at = utcnow()
-    db.commit()
-    db.refresh(event)
-    return _build_detail(db, event)
-
-
-def early_trigger_event(
-    db: Session, actor: ActorContext, event_id: str
-) -> dict[str, object]:
-    _require_admin_actor(actor)
-    event = _get_event_or_error(db, event_id)
-    _assert_pending_mutable(event)
-
-    if event.event_type != EventType.TIMED.value:
-        raise EventOperationError(
-            409, "Only timed pending events can be early-triggered"
-        )
-
-    now = utcnow()
-    event.trigger_time = now
-    db.flush()
-
-    try:
-        triggered_event = trigger_due_pending_event_with_bindings(
-            db,
-            event_id=event.id,
-            due_at=now,
-            triggered_at=now,
-        )
-    except Exception as exc:
-        raise EventOperationError(503, "Failed to dispatch event") from exc
-    if triggered_event is None:
-        raise EventOperationError(409, "Event is no longer pending")
-
-    event, _ = triggered_event
-    return _build_detail(db, event)
+    return created

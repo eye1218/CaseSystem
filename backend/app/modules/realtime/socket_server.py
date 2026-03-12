@@ -185,13 +185,15 @@ def configure_realtime_gateway(
     session_factory: SessionFactory | None = None,
 ) -> RealtimeGateway:
     global _gateway
-    if settings is not None or _gateway is None:
+    if _gateway is None:
         _gateway = RealtimeGateway(
             settings or get_settings(),
             session_factory=session_factory or SessionLocal,
         )
         return _gateway
 
+    if settings is not None:
+        _gateway.set_settings(settings)
     if session_factory is not None:
         _gateway.set_session_factory(session_factory)
     return _gateway

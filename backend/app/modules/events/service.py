@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from celery import group
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -11,6 +12,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from ...auth import ActorContext
 from ...enums import RoleCode
 from ...security import utcnow
+from ...worker.celery_app import celery_app
 from ..tickets.models import Ticket
 from ..tickets.seed_data import CATEGORY_NAMES
 from .enums import EventQueueStatus, EventQueueType, EventRuleStatus, EventRuleType
@@ -648,7 +650,12 @@ def list_due_pending_event_ids(
 
 
 def claim_due_pending_event_with_bindings(
-    db: Session, *, event_id: str, due_at: datetime, triggered_at: datetime
+    db: Session,
+    *,
+    event_id: str,
+    due_at: datetime,
+    triggered_at: datetime,
+    commit: bool = True,
 ) -> tuple[Event, list[EventBinding]] | None:
     result = db.execute(
         update(Event)
@@ -680,7 +687,51 @@ def claim_due_pending_event_with_bindings(
             .order_by(EventBinding.created_at.asc())
         ).all()
     )
-    db.commit()
+    if commit:
+        db.commit()
+    return event, bindings
+
+
+def _build_event_binding_signatures(
+    event: Event, bindings: list[EventBinding]
+) -> list[object]:
+    return [
+        celery_app.signature(
+            "app.modules.events.tasks.dispatch_event_binding",
+            kwargs={
+                "event_id": event.id,
+                "binding_id": binding.id,
+                "task_template_id": binding.task_template_id,
+                "payload": binding.payload,
+            },
+        )
+        for binding in bindings
+    ]
+
+
+def trigger_due_pending_event_with_bindings(
+    db: Session, *, event_id: str, due_at: datetime, triggered_at: datetime
+) -> tuple[Event, list[EventBinding]] | None:
+    claimed_event = claim_due_pending_event_with_bindings(
+        db,
+        event_id=event_id,
+        due_at=due_at,
+        triggered_at=triggered_at,
+        commit=False,
+    )
+    if claimed_event is None:
+        return None
+
+    event, bindings = claimed_event
+    try:
+        signatures = _build_event_binding_signatures(event, bindings)
+        if signatures:
+            group(signatures).apply_async()
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    db.refresh(event)
     return event, bindings
 
 
@@ -968,5 +1019,4 @@ def dispatch_timeout_signal(
         occurred_at=occurred_at,
         dispatch_immediate=True,
     )
-    db.commit()
     return created

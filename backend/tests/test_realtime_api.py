@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.modules.realtime import socket_server
 from app.security import decode_access_token
 
 from .conftest import issue_csrf, login
@@ -25,6 +26,28 @@ def test_authenticated_user_can_issue_socket_token(client, test_settings):
     claims = decode_access_token(token, test_settings)
     assert claims["sub"] == auth_payload["user"]["id"]
     assert claims["sid"] == auth_payload["session_id"]
+
+
+def test_realtime_gateway_is_reused_after_socket_app_creation(
+    test_settings, db_session_factory
+):
+    original_gateway = socket_server._gateway
+    socket_server._gateway = None
+
+    try:
+        socket_server.create_socketio_app(object(), settings=test_settings)
+        initial_gateway = socket_server.get_realtime_gateway()
+        initial_sio = initial_gateway.sio
+
+        configured_gateway = socket_server.configure_realtime_gateway(
+            settings=test_settings,
+            session_factory=db_session_factory,
+        )
+
+        assert configured_gateway is initial_gateway
+        assert configured_gateway.sio is initial_sio
+    finally:
+        socket_server._gateway = original_gateway
 
 
 def test_admin_can_create_list_and_read_notifications(client):

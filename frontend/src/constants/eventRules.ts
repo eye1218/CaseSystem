@@ -87,10 +87,9 @@ export function getEventStatusLabel(status: EventRuleStatus, language: "zh" | "e
 
 export function getTaskGroupLabel(group: string, language: "zh" | "en") {
   const labels: Record<string, { zh: string; en: string }> = {
-    notification: { zh: "通知", en: "Notification" },
-    follow_up: { zh: "跟进", en: "Follow Up" },
-    escalation: { zh: "升级", en: "Escalation" },
-    review: { zh: "复核", en: "Review" },
+    email: { zh: "邮件任务", en: "Email Task" },
+    webhook: { zh: "Webhook 任务", en: "Webhook Task" },
+    missing: { zh: "缺失模板", en: "Missing Template" },
   };
   return labels[group]?.[language] ?? group;
 }

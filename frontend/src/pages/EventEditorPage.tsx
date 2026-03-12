@@ -119,6 +119,20 @@ function defaultFilter(field: EventFilterField): EditableFilter {
   };
 }
 
+function mergeTaskTemplates(
+  bindableTemplates: EventTaskTemplate[],
+  boundTasks: EventTaskTemplate[] = [],
+) {
+  const templateMap = new Map<string, EventTaskTemplate>();
+  bindableTemplates.forEach((item) => templateMap.set(item.id, item));
+  boundTasks.forEach((item) => {
+    if (!templateMap.has(item.id)) {
+      templateMap.set(item.id, item);
+    }
+  });
+  return Array.from(templateMap.values());
+}
+
 function TagInput({
   tags,
   onChange,
@@ -296,6 +310,7 @@ export default function EventEditorPage() {
   const [showTaskModal, setShowTaskModal] = useState(false);
 
   const [taskTemplates, setTaskTemplates] = useState<EventTaskTemplate[]>([]);
+  const [bindableTaskTemplates, setBindableTaskTemplates] = useState<EventTaskTemplate[]>([]);
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [eventType, setEventType] = useState<EventRuleType>("normal");
@@ -322,7 +337,12 @@ export default function EventEditorPage() {
         if (cancelled) return;
 
         startTransition(() => {
-          setTaskTemplates(templatesResponse.items);
+          setBindableTaskTemplates(templatesResponse.items);
+          setTaskTemplates(
+            detailResponse
+              ? mergeTaskTemplates(templatesResponse.items, detailResponse.bound_tasks)
+              : templatesResponse.items,
+          );
           if (detailResponse) {
             applyDetail(detailResponse);
           }
@@ -367,6 +387,10 @@ export default function EventEditorPage() {
   const selectedTasks = taskTemplateIds
     .map((taskId) => taskTemplates.find((item) => item.id === taskId))
     .filter((item): item is EventTaskTemplate => Boolean(item));
+  const staleTaskIds = taskTemplateIds.filter(
+    (taskId) => !bindableTaskTemplates.some((item) => item.id === taskId),
+  );
+  const hasStaleTaskBindings = staleTaskIds.length > 0;
 
   const previewDetail: EventRuleDetail = {
     id: id ?? "preview",
@@ -410,6 +434,7 @@ export default function EventEditorPage() {
   }
 
   function addTaskTemplate(taskTemplate: EventTaskTemplate) {
+    setTaskTemplates((current) => mergeTaskTemplates(current, [taskTemplate]));
     setTaskTemplateIds((current) => [...current, taskTemplate.id]);
   }
 
@@ -469,6 +494,16 @@ export default function EventEditorPage() {
   }
 
   async function handleSave(enableAfterSave = false) {
+    if (hasStaleTaskBindings) {
+      setError(
+        zh
+          ? "当前绑定中包含已停用或缺失的任务模板，请先移除后再保存。"
+          : "Some bound task templates are inactive or missing. Remove them before saving.",
+      );
+      setFieldErrors({ task_template_ids: zh ? "存在不可继续绑定的任务模板" : "Contains inactive or missing task templates" });
+      return;
+    }
+
     setSaving(true);
     setError("");
     setFieldErrors({});
@@ -1042,6 +1077,16 @@ export default function EventEditorPage() {
                 {fieldErrors.task_template_ids ? (
                   <p className="mb-3 text-[11px] text-red-500">{fieldErrors.task_template_ids}</p>
                 ) : null}
+                {hasStaleTaskBindings ? (
+                  <div className="mb-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-[11px] text-rose-700 dark:border-rose-800/40 dark:bg-rose-900/20 dark:text-rose-300">
+                    <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+                    <p>
+                      {zh
+                        ? "当前规则中存在已停用或缺失的历史任务模板，可查看但不能继续保存绑定。请移除后再保存。"
+                        : "This rule contains inactive or missing historical task templates. They remain visible, but cannot stay bound when you save."}
+                    </p>
+                  </div>
+                ) : null}
 
                 <div className="space-y-2">
                   {selectedTasks.length === 0 ? (
@@ -1062,6 +1107,11 @@ export default function EventEditorPage() {
                           <p className="text-xs text-slate-800 dark:text-slate-100">{task.name}</p>
                           <p className="truncate text-[11px] text-slate-400 dark:text-slate-500">{task.description}</p>
                         </div>
+                        {!bindableTaskTemplates.some((item) => item.id === task.id) ? (
+                          <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] text-rose-600 dark:border-rose-800/40 dark:bg-rose-900/20 dark:text-rose-300">
+                            {zh ? "历史绑定" : "Historical"}
+                          </span>
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => removeTaskTemplate(task.id)}
@@ -1138,7 +1188,7 @@ export default function EventEditorPage() {
 
       {showTaskModal ? (
         <TaskTemplateModal
-          items={taskTemplates}
+          items={bindableTaskTemplates}
           selectedIds={taskTemplateIds}
           onSelect={addTaskTemplate}
           onClose={() => setShowTaskModal(false)}

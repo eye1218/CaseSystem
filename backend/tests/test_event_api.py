@@ -25,6 +25,92 @@ def switch_to_admin_role(client) -> None:
     assert response.json()["user"]["active_role"] == "ADMIN"
 
 
+def auth_headers(client) -> dict[str, str]:
+    csrf = client.cookies.get("XSRF-TOKEN")
+    assert csrf
+    return {"X-CSRF-Token": csrf, "Origin": "https://testserver"}
+
+
+def create_active_render_template(
+    client,
+    *,
+    template_type: str,
+    code: str,
+) -> dict:
+    if template_type == "EMAIL":
+        payload = {
+            "name": f"{code} 邮件模板",
+            "code": code,
+            "template_type": "EMAIL",
+            "fields": {
+                "subject": "[{{ ticket.priority }}] {{ ticket.id }} 通知",
+                "body": "工单标题：{{ ticket.title }}",
+            },
+        }
+    else:
+        payload = {
+            "name": f"{code} 回调模板",
+            "code": code,
+            "template_type": "WEBHOOK",
+            "fields": {
+                "url": "https://hooks.partner.local/tickets/{{ ticket.id }}",
+                "method": "POST",
+                "headers": [{"key": "Content-Type", "value": "application/json"}],
+                "body": "{\"ticket_id\": \"{{ ticket.id }}\"}",
+            },
+        }
+
+    create_response = client.post(
+        "/api/v1/templates",
+        json=payload,
+        headers=auth_headers(client),
+    )
+    assert create_response.status_code == 200, create_response.text
+    created = create_response.json()["template"]
+
+    activate_response = client.post(
+        f"/api/v1/templates/{created['id']}/status",
+        json={"status": "ACTIVE"},
+        headers=auth_headers(client),
+    )
+    assert activate_response.status_code == 200, activate_response.text
+    return activate_response.json()["template"]
+
+
+def create_task_template(
+    client,
+    *,
+    name: str,
+    task_type: str,
+    code: str,
+) -> dict:
+    render_template = create_active_render_template(
+        client,
+        template_type=task_type,
+        code=code,
+    )
+    response = client.post(
+        "/api/v1/task-templates",
+        json={
+            "name": name,
+            "task_type": task_type,
+            "reference_template_id": render_template["id"],
+            "status": "ACTIVE",
+            "recipient_config": {
+                "to": [{"source_type": "CUSTOM_EMAIL", "value": "soc@example.com"}],
+                "cc": [],
+                "bcc": [],
+            }
+            if task_type == "EMAIL"
+            else {"to": [], "cc": [], "bcc": []},
+            "target_config": {},
+        },
+        headers=auth_headers(client),
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 def create_event_rule(client, payload: dict[str, object]) -> dict:
     csrf = issue_csrf(client)
     response = client.post(
@@ -53,9 +139,34 @@ def test_admin_can_create_update_list_and_delete_event_rule(client):
     login(client, "admin", "AdminPass123")
     switch_to_admin_role(client)
 
+    template_alpha = create_task_template(
+        client,
+        name="高优先级通知任务",
+        task_type="EMAIL",
+        code="evt_rule_alpha_email",
+    )
+    template_beta = create_task_template(
+        client,
+        name="计时巡检任务",
+        task_type="WEBHOOK",
+        code="evt_rule_beta_webhook",
+    )
+    template_gamma = create_task_template(
+        client,
+        name="超时升级任务",
+        task_type="EMAIL",
+        code="evt_rule_gamma_email",
+    )
+
     task_templates = client.get("/api/v1/events/task-templates")
     assert task_templates.status_code == 200, task_templates.text
-    assert len(task_templates.json()["items"]) >= 3
+    bindable_ids = {item["id"] for item in task_templates.json()["items"]}
+    assert not any(item_id.startswith("tpl-") for item_id in bindable_ids)
+    assert {
+        template_alpha["id"],
+        template_beta["id"],
+        template_gamma["id"],
+    }.issubset(bindable_ids)
 
     created = create_event_rule(
         client,
@@ -72,7 +183,7 @@ def test_admin_can_create_update_list_and_delete_event_rule(client):
                 {"field": "category", "operator": "in", "values": ["network", "intrusion"]},
             ],
             "time_rule": {"mode": "immediate"},
-            "task_template_ids": ["tpl-001", "tpl-002"],
+            "task_template_ids": [template_alpha["id"], template_beta["id"]],
         },
     )
 
@@ -108,7 +219,7 @@ def test_admin_can_create_update_list_and_delete_event_rule(client):
             "name": "P1 工单创建延迟通知",
             "description": "满足条件后延迟 5 分钟通知",
             "time_rule": {"mode": "delayed", "delay_amount": 5, "delay_unit": "minutes"},
-            "task_template_ids": ["tpl-001"],
+            "task_template_ids": [template_alpha["id"]],
         },
         headers={"X-CSRF-Token": update_csrf, "Origin": "https://testserver"},
     )
@@ -178,6 +289,19 @@ def test_ticket_create_matches_enabled_rules_and_enqueues_dispatch_jobs(client, 
     login(client, "admin", "AdminPass123")
     switch_to_admin_role(client)
 
+    delayed_task = create_task_template(
+        client,
+        name="创建延迟通知任务",
+        task_type="EMAIL",
+        code="evt_delayed_email",
+    )
+    timer_task = create_task_template(
+        client,
+        name="创建计时巡检任务",
+        task_type="WEBHOOK",
+        code="evt_timer_webhook",
+    )
+
     create_event_rule(
         client,
         {
@@ -188,7 +312,7 @@ def test_ticket_create_matches_enabled_rules_and_enqueues_dispatch_jobs(client, 
             "trigger_point": "ticket.created",
             "filters": [{"field": "priority", "operator": "in", "values": ["P1"]}],
             "time_rule": {"mode": "delayed", "delay_amount": 5, "delay_unit": "minutes"},
-            "task_template_ids": ["tpl-001"],
+            "task_template_ids": [delayed_task["id"]],
         },
     )
     create_event_rule(
@@ -207,7 +331,7 @@ def test_ticket_create_matches_enabled_rules_and_enqueues_dispatch_jobs(client, 
                 "adjustment_amount": 5,
                 "adjustment_unit": "minutes",
             },
-            "task_template_ids": ["tpl-002"],
+            "task_template_ids": [timer_task["id"]],
         },
     )
 
@@ -246,8 +370,8 @@ def test_ticket_create_matches_enabled_rules_and_enqueues_dispatch_jobs(client, 
         timer_bindings = list(
             db.scalars(select(EventBinding).where(EventBinding.event_id == timer.id)).all()
         )
-        assert [binding.task_template_id for binding in delayed_bindings] == ["tpl-001"]
-        assert [binding.task_template_id for binding in timer_bindings] == ["tpl-002"]
+        assert [binding.task_template_id for binding in delayed_bindings] == [delayed_task["id"]]
+        assert [binding.task_template_id for binding in timer_bindings] == [timer_task["id"]]
 
 
 def test_due_event_can_only_be_claimed_once(db_session_factory):
@@ -359,6 +483,13 @@ def test_response_timeout_rules_dispatch_on_due_signal(client, db_session_factor
     login(client, "admin", "AdminPass123")
     switch_to_admin_role(client)
 
+    timeout_task = create_task_template(
+        client,
+        name="响应超时通知任务",
+        task_type="EMAIL",
+        code="evt_timeout_email",
+    )
+
     create_event_rule(
         client,
         {
@@ -369,7 +500,7 @@ def test_response_timeout_rules_dispatch_on_due_signal(client, db_session_factor
             "trigger_point": "ticket.response.timeout",
             "filters": [{"field": "priority", "operator": "in", "values": ["P1"]}],
             "time_rule": {"mode": "immediate"},
-            "task_template_ids": ["tpl-003"],
+            "task_template_ids": [timeout_task["id"]],
         },
     )
 

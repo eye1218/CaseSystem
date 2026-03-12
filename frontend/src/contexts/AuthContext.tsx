@@ -93,10 +93,10 @@ export function useAuth() {
 
 export function hasMenuAccess(role: RoleCode, menuItem: string): boolean {
   const accessMatrix: Record<RoleCode, string[]> = {
-    T1: ["tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "reports"],
-    T2: ["tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "reports", "kpi"],
-    T3: ["tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "reports", "kpi"],
-    ADMIN: ["dashboard", "tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "events", "reports", "kpi", "configuration", "users", "audit", "recycle"],
+    T1: ["tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "tasks", "reports"],
+    T2: ["tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "tasks", "reports", "kpi"],
+    T3: ["tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "tasks", "reports", "kpi"],
+    ADMIN: ["dashboard", "tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "events", "tasks", "reports", "kpi", "configuration", "users", "audit", "recycle"],
     CUSTOMER: ["tickets", "reports", "notifications"]
   };
 

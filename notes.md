@@ -52,6 +52,8 @@
 1. Figma Make 文件和普通 Design 文件不同：
    - `get_metadata` / `get_screenshot` 不适用于 Make 文件
    - 应优先通过 `get_design_context` 读取 Make 项目的源码资源，再结合预览页做视觉校对
+   - 远程 Figma MCP 在读取 Make 项目时，可以直接对 `makeFileKey` 调用 `get_design_context`
+   - 当前实践里传入占位节点 `nodeId="0:0"` 即可拿到整份 Make 的源码资源列表，再按 `src/app/pages/*`、`src/styles/*` 精确读取
 2. HTTP 预览环境下不要继续使用 `__Host-` / `__Secure-` 前缀 cookie 名。
    - 这两个前缀要求浏览器必须同时满足 `Secure`
    - 当 `cookie_secure=false` 且页面走 `http://` 时，浏览器会直接拒收 cookie，导致登录成功后后续接口仍然是未认证状态
@@ -62,6 +64,9 @@
 4. 本地 `npm` 缓存目录如果残留 root-owned 文件，`npm ci` 会直接报权限错误。
    - 部署脚本里应显式指定仓库内缓存目录，例如 `.npm-cache`
    - 这样可以避免依赖用户主目录下不可控的历史缓存状态
+5. 预览部署时如果 `rsync --delete` 输出 `cannot delete non-empty directory: casesystem`，不一定表示本次部署失败。
+   - 当前实践里该提示未阻断后续依赖安装、`systemd` 重启和健康检查
+   - 应以脚本末尾的远端 `/healthz`、登录页和业务接口校验结果作为最终判定
 
 ## 2026-03-10 工单详情页与建单联调
 
@@ -84,3 +89,105 @@
 2. 遇到“只有按钮文字大小不对，普通文本正常”的问题时，不要只看 JSX 类名。
    - 最快的定位方式是直接在浏览器里读取 `getComputedStyle`
    - 本次线上表头的 `button` 实际计算值是 `16px / 700 / 24px`，而普通表头 `span` 是 `11px / 600 / 11px`
+
+## 2026-03-11 后端结构抽取（core/infra）
+
+1. 在 Git worktree 中做后端验证时，优先复用主仓库虚拟环境并显式设置导入路径：
+   - `PYTHONPATH=backend /Volumes/data/workspace/python/CaseSystem/.venv/bin/python -c "from app.main import create_app"`
+   - `PYTHONPATH=backend /Volumes/data/workspace/python/CaseSystem/.venv/bin/pytest backend/tests -q`
+2. 做分层迁移（如 `app/*` -> `app/core`、`app/infra`）时，可先保留薄兼容模块转发导入，降低一次性全量改 import 的风险，便于后续分波次演进。
+
+## 2026-03-11 Alembic 基线迁移
+
+1. 用 Alembic 做首个基线迁移时，如果直接对已有表的开发库执行 `revision --autogenerate`，容易得到空差异。
+   - 更稳妥做法是临时指定一个干净数据库（例如 `CASESYSTEM_DATABASE_URL=sqlite:///./alembic_bootstrap.db`）生成初始迁移，再执行 `alembic upgrade head` 验证。
+2. 当前仓库在 worktree 中执行 Alembic 时，需显式补 `PYTHONPATH=backend`，否则 `alembic/env.py` 无法导入 `app.*`。
+
+## 2026-03-11 Celery 运行时脚手架
+
+1. 在本仓库 worktree 中验证 Celery 导入时，优先用主仓库虚拟环境并显式设置导入路径：
+   - `PYTHONPATH=backend /Volumes/data/workspace/python/CaseSystem/.venv/bin/python -c "from app.worker.celery_app import celery_app; print(celery_app.main)"`
+2. Celery 运行时初始化应与 FastAPI `create_app()` 解耦：
+   - `celery_app` 放在独立的 `backend/app/worker/celery_app.py`
+   - 任务 include 和 beat schedule 通过独立模块集中管理，避免后续事件任务接入时改动应用启动流程
+
+## 2026-03-11 Auth domain modular migration
+
+1. Refactoring a large auth service into a new module package can expose hidden type-flow assumptions.
+   - Mark guard helpers that always raise as NoReturn (e.g., _raise_login_failed) so static analysis correctly narrows Optional values.
+   - Keep behavior stable by pairing runtime guards with narrow typing updates (assert/cast) rather than rewriting auth logic.
+2. For phased modularization, keep compatibility shims at old import paths (app/auth.py, app/policies.py, app/schemas.py auth re-exports) while routing FastAPI endpoints from the new domain router; this reduces break risk for existing imports/tests.
+
+## 2026-03-11 Event migration contract
+
+1. 当前运行环境是 Python 3.9，Alembic 迁移脚本里的类型注解不要使用 `str | Sequence[str] | None`。
+   - 迁移模块会在导入阶段执行，3.9 下会因 `|` 联合类型报 `TypeError`
+   - 应保持 `Union[str, Sequence[str], None]` 写法，避免命令级别失败（如 `alembic heads`）
+
+## 2026-03-11 Ticket domain modularization
+
+1. 领域模块拆分时，`package/__init__.py` 应保持最小化，避免在其中提前导入路由对象。
+   - 本次若在 `backend/app/modules/tickets/__init__.py` 导入 `ticket_router`，会在应用导入阶段触发 `auth -> models -> tickets -> routes -> auth` 循环依赖。
+2. 对旧入口（如 `backend/app/ticketing.py`）保留兼容 re-export shim，可在不改调用方的前提下平滑迁移到 `backend/app/modules/tickets/*`。
+
+## 2026-03-11 Event Celery sweep verification
+
+1. 验证 Event sweep/dispatch 行为时，优先在单条命令里显式设置独立数据库环境，避免受本地持久库历史数据干扰：
+   - `CASESYSTEM_DATABASE_URL="sqlite+pysqlite:///:memory:" PYTHONPATH=backend /Volumes/data/workspace/python/CaseSystem/.venv/bin/python -c "..."`
+2. 这种方式可以在一个进程内完成 `init_db -> 构造事件/绑定 -> 运行 sweep -> 断言状态`，适合快速验证“due pending 触发”和“cancelled 跳过”两条路径。
+
+## 2026-03-11 Backend test environment alignment
+
+1. 在这个仓库里跑后端测试时，应优先使用仓库内 `.venv`，不要直接依赖系统 Python 环境：
+   - `PYTHONPATH=backend .venv/bin/pytest backend/tests -q`
+2. 如果直接调用系统环境里的 `pytest`，可能会命中缺失依赖（本次实际遇到 `starlette.testclient` 依赖 `httpx` 缺失），造成“代码问题”和“环境问题”混淆。
+
+## 2026-03-11 长连接模块接入
+
+1. 前端无法直接读取登录态 access token 时，Socket.IO 握手不要尝试复用 `httpOnly` cookie 里的 JWT。
+   - 本次稳定做法是新增 `/auth/socket-token`，由已登录 HTTP 会话换取一个短期 socket token，再通过 `auth.token` 建立连接。
+2. 当前仓库的数据库初始化仍以 `Base.metadata.create_all()` 为主。
+   - 当给已有表补字段（例如 `tickets.version`）时，单靠 `create_all()` 不会修改历史 SQLite 表结构。
+   - 如果暂时没有 Alembic 迁移，至少要在启动期补一层轻量 schema sync，避免老库启动后直接因为缺列报错。
+3. 在 `zsh` 下安装本项目 extras 时，`.[dev]` 需要加引号。
+   - 可直接使用 `.venv/bin/pip install -e '.[dev]'`
+   - 否则 shell 会把方括号当成 glob，命令在进入 pip 前就失败。
+4. 当前仓库的 `.venv` 存在混合解释器痕迹，命令入口要优先跟 shebang 对齐。
+   - 本次 `pip`、`pytest`、`uvicorn` 都落在 `.venv/bin/python3.14`
+   - 但直接运行 `.venv/bin/python` 会进入 3.9 路径，看不到刚装进 `python3.14/site-packages` 的依赖（例如 `socketio`）
+
+## 2026-03-11 Ticket realtime cache implementation
+
+1. 当前测试种子里的 `admin` 用户默认活动角色不是 `ADMIN`，而是其主角色 `T2`。
+   - 如果测试要验证 `ADMIN` 权限，必须显式走 `/auth/switch-role`。
+   - 如果只是验证“内部角色可见性”，断言应基于实际默认角色，避免把用户身份和活动角色混为一谈。
+   - 这条规则同样影响页面验收；配置中心这类 `ADMIN` 菜单如果在登录后看不到，先检查右上角活动角色是否仍是 `T2`，不要先把问题归因到部署或前端资源未更新。
+
+## 2026-03-11 模板渲染后端接口
+
+1. 本项目当前不会因为已有 `FastAPI` 依赖就自动具备模板渲染能力。
+   - `jinja2` 需要显式写入 `pyproject.toml` 正式依赖，否则运行模板模块或导入 `jinja2.sandbox` 会直接报 `ModuleNotFoundError`
+   - 补依赖后要重新执行 `.venv/bin/pip install -e '.[dev]'`，只改 `pyproject.toml` 不会让现有虚拟环境自动可用
+
+## 2026-03-11 配置中心模板详情页前端接入
+
+1. FastAPI/Pydantic 校验失败在这个项目里经常返回结构化 `detail`，不能只把错误响应当成纯文本抛出。
+   - 如果 `apiFetch` 只保留字符串 message，配置页这类表单将拿不到字段级错误，无法把后端 `field_errors` 或 `loc/msg` 正确映射回输入框
+   - 稳定做法是让统一 `ApiError` 同时保留 `status` 和原始 `detail`，页面再按业务场景解析
+2. 当前后端的 CSRF 校验对部分变更接口依赖 `Origin/Referer` 语义，前端 `PATCH` 不能只带 `X-CSRF-Token`。
+   - 本次模板编辑接口如果缺少 `Origin`，会出现“创建成功、更新失败”的假象
+   - 统一在变更请求里补 `Origin: window.location.origin` 后，配置中心的保存/状态切换流程恢复稳定
+3. Figma Make 文件不能沿用普通设计稿的 `get_metadata` / `get_screenshot` 工作流。
+   - 这两个 MCP 工具对 Make 文件会直接返回“不支持”，不能再继续按节点截图或元数据拆层
+   - 当前可行做法是先对 `0:0` 调 `get_design_context(forceCode=true)`，再从返回的 resource links 里直接读取 `src/app/pages/*.tsx` 作为页面真值
+
+## 2026-03-12 知识库模块接回主工作区
+
+1. 如果功能最初是在独立 `git worktree` 内完成，回到主工作区时必须重新核对真实路由挂载关系，不能假设“实现过一次就已经在当前仓库里”。
+   - 这次根因不是缓存，而是主工作区的 `frontend/src/app/routes.tsx` 仍然把 `/knowledge` 指向 `PlaceholderPage`
+   - 最快的确认方式是直接 `rg 'path: \"knowledge\"|PlaceholderPage' frontend/src/app/routes.tsx`
+2. 当前后端模块化结构里，凡是会被 `app.models` 导入以注册 ORM 表的子模块包，`__init__.py` 都应该保持最小化。
+   - 如果在这里导入 `routes`，很容易触发 `app.models -> 模块包 -> routes -> auth -> app.models` 的循环依赖
+   - 稳定做法是让 `__init__.py` 保持为空或只暴露轻量符号，路由对象只在应用装配处显式导入
+3. 前端仓库仅靠 `vite build` 还不够，补跑 `npx tsc --noEmit` 能额外暴露真实空值收窄问题。
+   - 本次知识库接线完成后，又顺手修掉了 `RealtimeContext`、`TicketListPage`、`TicketDetailPage` 里的若干 `possibly null/undefined` 类型问题

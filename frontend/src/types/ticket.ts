@@ -1,3 +1,5 @@
+import type { KnowledgeArticleSummary } from "./knowledge";
+
 export type TicketMainStatus =
   | "WAITING_RESPONSE"
   | "IN_PROGRESS"
@@ -17,6 +19,7 @@ export type TicketPriority = "P1" | "P2" | "P3" | "P4";
 
 export interface TicketSummary {
   id: number;
+  version: number;
   title: string;
   description: string;
   category_id: string;
@@ -120,7 +123,7 @@ export interface TicketDetail {
   ticket: TicketSummary;
   available_actions: string[];
   activity_feed: TicketActivityItem[];
-  knowledge_articles: TicketKnowledgeArticle[];
+  related_knowledge: KnowledgeArticleSummary[];
   reports: TicketReport[];
   raw_alerts: TicketAlert[];
   siem_context_markdown: LocalizedText;
@@ -129,17 +132,33 @@ export interface TicketDetail {
   permission_scope: TicketPermissionScope;
 }
 
+export interface TicketLive {
+  ticket: TicketSummary;
+  available_actions: string[];
+  activity_feed: TicketActivityItem[];
+  raw_alerts: TicketAlert[];
+  responsibility_summary: LocalizedText;
+  permission_scope: TicketPermissionScope;
+}
+
 export interface TicketCommentPayload {
+  version: number;
   content: string;
   visibility: "PUBLIC" | "INTERNAL";
 }
 
 export interface TicketUpdatePayload {
+  version: number;
   title?: string;
   description?: string;
   category_id?: string;
   priority?: TicketPriority;
   risk_score?: number;
+}
+
+export interface TicketActionPayload {
+  version: number;
+  note?: string;
 }
 
 export interface TicketCreatePayload {

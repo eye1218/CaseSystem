@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from app.modules.tickets.cache import (
+    InMemoryTicketCacheBackend,
+    set_ticket_cache_backend,
+)
+from app.modules.tickets.models import Ticket, TicketComment
+
 from .conftest import issue_csrf, login
 
 
@@ -50,7 +56,7 @@ def test_ticket_detail_hides_internal_activity_for_customer(client):
     payload = response.json()
 
     assert payload["ticket"]["id"] == 100181
-    assert payload["knowledge_articles"]
+    assert payload["related_knowledge"] == []
     assert payload["reports"]
     assert all(item["visibility"] == "PUBLIC" for item in payload["activity_feed"])
 
@@ -107,3 +113,100 @@ def test_customer_can_create_ticket_and_only_see_own_ticket(client):
     listing = client.get("/api/v1/tickets")
     assert listing.status_code == 200
     assert created_id in {item["id"] for item in listing.json()["items"]}
+
+
+def test_ticket_live_response_returns_only_volatile_sections(client, db_session_factory):
+    set_ticket_cache_backend(InMemoryTicketCacheBackend())
+    with db_session_factory() as db:
+        db.add(
+            TicketComment(
+                ticket_id=100181,
+                actor_user_id="user-admin",
+                actor_name="Admin",
+                actor_role="ADMIN",
+                visibility="INTERNAL",
+                content="仅内部可见的协作记录。",
+                is_system=False,
+            )
+        )
+        db.commit()
+
+    login(client, "customer", "CustomerPass123")
+    response = client.get("/api/v1/tickets/100181/live")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert set(payload) == {
+        "ticket",
+        "available_actions",
+        "activity_feed",
+        "raw_alerts",
+        "responsibility_summary",
+        "permission_scope",
+    }
+    assert all(item["visibility"] == "PUBLIC" for item in payload["activity_feed"])
+    assert payload["permission_scope"]["current_role"] == "CUSTOMER"
+
+
+def test_ticket_detail_cache_hits_before_write_invalidation(client, db_session_factory):
+    set_ticket_cache_backend(InMemoryTicketCacheBackend())
+    login(client, "admin", "AdminPass123")
+
+    first_detail = client.get("/api/v1/tickets/100177/detail")
+    assert first_detail.status_code == 200, first_detail.text
+    original_title = first_detail.json()["ticket"]["title"]
+
+    with db_session_factory() as db:
+        ticket = db.get(Ticket, 100177)
+        assert ticket is not None
+        ticket.title = "数据库已变更但缓存仍应返回旧标题"
+        db.commit()
+        db.refresh(ticket)
+        current_version = ticket.version
+
+    cached_detail = client.get("/api/v1/tickets/100177/detail")
+    assert cached_detail.status_code == 200, cached_detail.text
+    assert cached_detail.json()["ticket"]["title"] == original_title
+
+    csrf = issue_csrf(client)
+    update_response = client.patch(
+        "/api/v1/tickets/100177",
+        json={"version": current_version, "title": "写后失效的新标题"},
+        headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+    )
+    assert update_response.status_code == 200, update_response.text
+
+    live_response = client.get("/api/v1/tickets/100177/live")
+    assert live_response.status_code == 200, live_response.text
+    assert live_response.json()["ticket"]["title"] == "写后失效的新标题"
+
+
+def test_cached_detail_base_is_filtered_per_actor(client, db_session_factory):
+    set_ticket_cache_backend(InMemoryTicketCacheBackend())
+    with db_session_factory() as db:
+        db.add(
+            TicketComment(
+                ticket_id=100181,
+                actor_user_id="user-admin",
+                actor_name="Admin",
+                actor_role="ADMIN",
+                visibility="INTERNAL",
+                content="缓存底座中的内部评论。",
+                is_system=False,
+            )
+        )
+        db.commit()
+
+    login(client, "admin", "AdminPass123")
+    internal_detail = client.get("/api/v1/tickets/100181/detail")
+    assert internal_detail.status_code == 200, internal_detail.text
+    internal_payload = internal_detail.json()
+    assert any(item["visibility"] == "INTERNAL" for item in internal_payload["activity_feed"])
+    assert internal_payload["permission_scope"]["current_role"] == "T2"
+
+    login(client, "customer", "CustomerPass123")
+    customer_detail = client.get("/api/v1/tickets/100181/detail")
+    assert customer_detail.status_code == 200, customer_detail.text
+    customer_payload = customer_detail.json()
+    assert all(item["visibility"] == "PUBLIC" for item in customer_payload["activity_feed"])
+    assert customer_payload["permission_scope"]["current_role"] == "CUSTOMER"

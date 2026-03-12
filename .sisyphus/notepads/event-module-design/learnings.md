@@ -1,0 +1,25 @@
+- Setup git worktree at `/Volumes/data/workspace/python/CaseSystem-worktrees/event-module-design` successfully.
+- Updated `boulder.json` with `worktree_path` for the active session bootstrap.
+- Switched to clean worktree `/Volumes/data/workspace/python/CaseSystem-worktrees/event-module-design-main` because the first worktree branch was ahead of `main` and already dirty.
+- T4 extracted shared runtime concerns into `backend/app/core` and `backend/app/infra`, while keeping thin compatibility modules (`config.py`, `database.py`, `security.py`, `dependencies.py`, `bootstrap.py`) to avoid breaking existing imports during staged refactors.
+- `backend/app/main.py` startup initialization is now centralized through `app.infra.bootstrap.bootstrap_runtime()`, which keeps `create_app()` focused on app creation plus route wiring.
+- In this worktree, Python verification should run with `PYTHONPATH=backend /Volumes/data/workspace/python/CaseSystem/.venv/bin/pytest ...` because the worktree itself does not have a local `.venv`.
+
+- Codified the Event module contract and target modular backend architecture in `docs/event-module-design.md`.
+- Defined core Event semantics: `instant` vs `timed`, `pending/triggered/cancelled`, early trigger, and postpone.
+- Established the modular backend layout under `backend/app/modules/` to support future domain expansion.
+- Implementation Guidance: Use UUIDs for Event IDs, treat `task_template_id` as opaque, and implement DB-first scheduling with Celery Beat.
+- Initialized Alembic in `/Volumes/data/workspace/python/CaseSystem-worktrees/event-module-design-main` with `alembic.ini` + `alembic/`, and wired `alembic/env.py` to `app.infra.db.Base.metadata` plus `CASESYSTEM_DATABASE_URL`.
+- Baseline migration for current auth+ticket schema is `alembic/versions/54a3e05e5075_baseline_schema.py`; verified `alembic heads` and `alembic upgrade head` using `PYTHONPATH=backend /Volumes/data/workspace/python/CaseSystem/.venv/bin/alembic`.
+- T3 introduced Celery runtime scaffolding under `backend/app/worker` with a shared `celery_app`, explicit `TASK_INCLUDE`/`BEAT_SCHEDULE` include points, and DB-safe `DatabaseTask` session lifecycle handling.
+- Celery import/discovery verification in this worktree uses `PYTHONPATH=backend /Volumes/data/workspace/python/CaseSystem/.venv/bin/python -c "from app.worker.celery_app import celery_app; ..."` to avoid coupling worker bootstrap to FastAPI app startup.
+- T5 auth modularization: extracted auth domain package under backend/app/modules/auth (service.py, routes.py, schemas.py, policies.py, models.py) while preserving public paths by mounting auth_router in create_app() and keeping compatibility shims (app/auth.py, app/policies.py, auth schema re-exports in app/schemas.py).
+- For this worktree, auth regression verification remains PYTHONPATH=backend /Volumes/data/workspace/python/CaseSystem/.venv/bin/pytest backend/tests/test_auth_flow.py backend/tests/test_authorization.py, plus import smoke-check PYTHONPATH=backend .../python -c "from app.main import app".
+- T7 future-package scaffolding now exists as empty package markers under `backend/app/modules/knowledge`, `backend/app/modules/reports`, and `backend/app/modules/users`, with no route registration added.
+- T8 Event persistence contract landed under `backend/app/modules/events`: enums are locked to `EventStatus(pending/triggered/cancelled)` and `EventType(instant/timed)`, with UUID string Event IDs and opaque `task_template_id` binding only.
+- Alembic metadata now loads Event tables by importing `app.modules.events.models` in `alembic/env.py`, and migration `c44ff423562d_add_event_tables.py` cleanly applies `events` + `event_bindings`.
+- T6 ticket modularization: route handlers were moved into `backend/app/modules/tickets/routes.py`, runtime logic into `service.py`, seed records into `seed_data.py`, and support assets into `support_data.py`, while `app/ticketing.py` remains a compatibility re-export shim.
+- Avoid eager route imports inside `backend/app/modules/tickets/__init__.py`; importing routers there can trigger circular imports during model loading. Keep package `__init__` minimal for modular domains with ORM models.
+- T9 API verification should switch the demo `admin` account to active role `ADMIN` before calling admin-only endpoints; seeded primary role is `T2`, so direct checks without `/auth/switch-role` will fail by design.
+- T11 ticket-event hooks are safest when `related_object` is always mirrored in Event payload and conditionally set as a direct column when present, so the same code path works across schema variants.
+- Fidelity checks should trust direct code/tests over delegated status notes: this worktree currently has T11 hooks implemented in ticket service, while T12 coverage is still missing.

@@ -1,9 +1,10 @@
-import { ChevronDown, Languages, LogOut, Moon, Sun, User } from "lucide-react";
+import { Bell, ChevronDown, Languages, LogOut, Moon, Sun, User } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 
 import { useAuth } from "../contexts/AuthContext";
 import { useLanguage } from "../contexts/LanguageContext";
+import { useRealtime } from "../contexts/RealtimeContext";
 import { useTheme } from "../contexts/ThemeContext";
 import type { RoleCode } from "../types/auth";
 
@@ -24,6 +25,7 @@ const routeTitleMap: Record<string, string> = {
 export default function AppHeader() {
   const { user, logout, switchRole } = useAuth();
   const { language, toggleLanguage, t } = useLanguage();
+  const { realtimeStatus, unreadCount } = useRealtime();
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
@@ -37,6 +39,9 @@ export default function AppHeader() {
   const pageTitleKey = useMemo(() => {
     if (location.pathname.startsWith("/tickets/")) {
       return "nav.tickets";
+    }
+    if (location.pathname.startsWith("/configuration")) {
+      return "nav.configuration";
     }
     return routeTitleMap[location.pathname] ?? "dashboard.title";
   }, [location.pathname]);
@@ -67,6 +72,29 @@ export default function AppHeader() {
           <Languages className="h-4 w-4" />
           <span>{language === "zh" ? "EN" : "中"}</span>
         </button>
+
+        <Link
+          to="/notifications"
+          className="relative inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+        >
+          <span
+            className={`h-2.5 w-2.5 rounded-full ${
+              realtimeStatus === "connected"
+                ? "bg-emerald-500"
+                : realtimeStatus === "connecting"
+                  ? "bg-amber-500"
+                  : realtimeStatus === "error"
+                    ? "bg-red-500"
+                    : "bg-slate-400"
+            }`}
+          />
+          <Bell className="h-4 w-4" />
+          {unreadCount > 0 && (
+            <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-blue-600 px-2 py-0.5 text-[11px] font-semibold text-white">
+              {unreadCount > 99 ? "99+" : unreadCount}
+            </span>
+          )}
+        </Link>
 
         {user.roles.length > 1 && (
           <div className="relative">

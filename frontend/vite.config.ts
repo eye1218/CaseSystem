@@ -10,7 +10,11 @@ export default defineConfig({
     proxy: {
       "/auth": "http://127.0.0.1:8010",
       "/api": "http://127.0.0.1:8010",
-      "/healthz": "http://127.0.0.1:8010"
+      "/healthz": "http://127.0.0.1:8010",
+      "/socket.io": {
+        target: "http://127.0.0.1:8010",
+        ws: true
+      }
     }
   },
   build: {

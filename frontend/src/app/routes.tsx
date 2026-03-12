@@ -1,11 +1,18 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import MainLayout from "../components/MainLayout";
+import RequireInternalKnowledge from "../components/RequireInternalKnowledge";
 import LoginPage from "../pages/LoginPage";
 import TicketCreatePage from "../pages/TicketCreatePage";
 import TicketListPage from "../pages/TicketListPage";
 import TicketDetailPage from "../pages/TicketDetailPage";
+import KnowledgeDetailPage from "../pages/KnowledgeDetailPage";
+import KnowledgeEditorPage from "../pages/KnowledgeEditorPage";
+import KnowledgeListPage from "../pages/KnowledgeListPage";
+import NotificationsPage from "../pages/NotificationsPage";
 import PlaceholderPage from "../pages/PlaceholderPage";
+import ConfigurationPage from "../pages/ConfigurationPage";
+import TemplateRenderingPage from "../pages/TemplateRenderingPage";
 
 export const router = createBrowserRouter([
   {
@@ -42,11 +49,39 @@ export const router = createBrowserRouter([
       },
       {
         path: "notifications",
-        element: <PlaceholderPage titleKey="nav.notifications" description="通知中心尚未进入本阶段开发。" />
+        element: <NotificationsPage />
       },
       {
         path: "knowledge",
-        element: <PlaceholderPage titleKey="nav.knowledge" description="知识库模块后续接入 Markdown 与搜索能力。" />
+        element: (
+          <RequireInternalKnowledge>
+            <KnowledgeListPage />
+          </RequireInternalKnowledge>
+        )
+      },
+      {
+        path: "knowledge/new",
+        element: (
+          <RequireInternalKnowledge>
+            <KnowledgeEditorPage />
+          </RequireInternalKnowledge>
+        )
+      },
+      {
+        path: "knowledge/:id",
+        element: (
+          <RequireInternalKnowledge>
+            <KnowledgeDetailPage />
+          </RequireInternalKnowledge>
+        )
+      },
+      {
+        path: "knowledge/:id/edit",
+        element: (
+          <RequireInternalKnowledge>
+            <KnowledgeEditorPage />
+          </RequireInternalKnowledge>
+        )
       },
       {
         path: "reports",
@@ -58,7 +93,11 @@ export const router = createBrowserRouter([
       },
       {
         path: "configuration",
-        element: <PlaceholderPage titleKey="nav.configuration" description="配置中心保留入口，后续统一建设。" />
+        element: <ConfigurationPage />
+      },
+      {
+        path: "configuration/templates",
+        element: <TemplateRenderingPage />
       },
       {
         path: "users",

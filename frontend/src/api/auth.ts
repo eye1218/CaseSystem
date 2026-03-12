@@ -16,3 +16,7 @@ export function logout() {
 export function switchRole(activeRoleCode: string) {
   return apiPost<AuthResponse>("/auth/switch-role", { active_role_code: activeRoleCode });
 }
+
+export function issueSocketToken() {
+  return apiFetch<{ token: string }>("/auth/socket-token");
+}

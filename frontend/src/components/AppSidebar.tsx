@@ -16,6 +16,7 @@ import {
 
 import { hasMenuAccess, useAuth } from "../contexts/AuthContext";
 import { useLanguage } from "../contexts/LanguageContext";
+import { useRealtime } from "../contexts/RealtimeContext";
 import { useTheme } from "../contexts/ThemeContext";
 import logoDark from "../styles/logo-dark.svg";
 import logoLight from "../styles/logo-light.svg";
@@ -38,6 +39,7 @@ const menuItems = [
 export default function AppSidebar() {
   const { user } = useAuth();
   const { t } = useLanguage();
+  const { unreadCount } = useRealtime();
   const { theme } = useTheme();
 
   if (!user) return null;
@@ -80,6 +82,11 @@ export default function AppSidebar() {
                 >
                   <Icon className="h-5 w-5" />
                   <span className="font-medium">{t(item.label)}</span>
+                  {item.id === "notifications" && unreadCount > 0 && (
+                    <span className="ml-auto inline-flex min-w-6 items-center justify-center rounded-full bg-blue-600 px-2 py-0.5 text-[11px] font-semibold text-white">
+                      {unreadCount > 99 ? "99+" : unreadCount}
+                    </span>
+                  )}
                 </NavLink>
               );
             })}

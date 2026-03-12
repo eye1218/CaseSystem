@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 
 import { getTicketCategory } from "../constants/ticketCategories";
 import type { KnowledgeArticleSummary } from "../types/knowledge";
+import { createRelatedKnowledgeClickHandler } from "../utils/relatedKnowledge";
 import { formatApiDateTime } from "../utils/datetime";
 
 export default function RelatedKnowledgePanel({
@@ -10,13 +11,15 @@ export default function RelatedKnowledgePanel({
   items,
   language,
   onRefresh,
-  canCreate
+  canCreate,
+  onSelectArticle
 }: {
   categoryId: string;
   items: KnowledgeArticleSummary[];
   language: "zh" | "en";
   onRefresh?: () => void;
   canCreate: boolean;
+  onSelectArticle?: (article: KnowledgeArticleSummary) => void;
 }) {
   const navigate = useNavigate();
   const zh = language === "zh";
@@ -66,7 +69,10 @@ export default function RelatedKnowledgePanel({
           items.map((article) => (
             <button
               key={article.id}
-              onClick={() => navigate(`/knowledge/${article.id}`)}
+              onClick={createRelatedKnowledgeClickHandler(article, {
+                navigate,
+                onSelectArticle
+              })}
               className="group flex w-full items-start gap-2.5 rounded-lg border border-slate-100 px-3 py-2.5 text-left transition-all hover:border-blue-300 hover:bg-blue-50/50 dark:border-slate-700 dark:hover:border-blue-700 dark:hover:bg-blue-900/10"
             >
               {article.is_pinned ? <Pin className="mt-0.5 h-3 w-3 flex-shrink-0 text-amber-500" /> : null}

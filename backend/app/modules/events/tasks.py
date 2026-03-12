@@ -9,6 +9,7 @@ from ...worker.celery_app import celery_app
 from ...worker.task_base import db_session
 from .service import (
     claim_due_pending_event_with_bindings,
+    dispatch_timeout_signal,
     list_due_pending_event_ids,
 )
 
@@ -45,6 +46,32 @@ def sweep_due_events(batch_size: int = 100) -> dict[str, int]:
                 continue
 
         event, bindings = claimed_event
+        if event.payload.get("kind") == "ticket_timeout_signal":
+            with db_session() as db:
+                immediate_dispatches = dispatch_timeout_signal(
+                    db,
+                    signal_event=event,
+                    occurred_at=due_at,
+                )
+            for created_event, created_bindings in immediate_dispatches:
+                signatures = [
+                    celery_app.signature(
+                        "app.modules.events.tasks.dispatch_event_binding",
+                        kwargs={
+                            "event_id": created_event.id,
+                            "binding_id": binding.id,
+                            "task_template_id": binding.task_template_id,
+                            "payload": binding.payload,
+                        },
+                    )
+                    for binding in created_bindings
+                ]
+                if signatures:
+                    group(signatures).apply_async()
+                    dispatched_count += len(signatures)
+            claimed_count += 1
+            continue
+
         signatures = [
             celery_app.signature(
                 "app.modules.events.tasks.dispatch_event_binding",

@@ -1,7 +1,11 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import MainLayout from "../components/MainLayout";
+import RequireAdminRoute from "../components/RequireAdminRoute";
 import RequireInternalKnowledge from "../components/RequireInternalKnowledge";
+import EventDetailPage from "../pages/EventDetailPage";
+import EventEditorPage from "../pages/EventEditorPage";
+import EventsPage from "../pages/EventsPage";
 import LoginPage from "../pages/LoginPage";
 import TicketCreatePage from "../pages/TicketCreatePage";
 import TicketListPage from "../pages/TicketListPage";
@@ -81,6 +85,38 @@ export const router = createBrowserRouter([
           <RequireInternalKnowledge>
             <KnowledgeEditorPage />
           </RequireInternalKnowledge>
+        )
+      },
+      {
+        path: "events",
+        element: (
+          <RequireAdminRoute>
+            <EventsPage />
+          </RequireAdminRoute>
+        )
+      },
+      {
+        path: "events/new",
+        element: (
+          <RequireAdminRoute>
+            <EventEditorPage />
+          </RequireAdminRoute>
+        )
+      },
+      {
+        path: "events/:id",
+        element: (
+          <RequireAdminRoute>
+            <EventDetailPage />
+          </RequireAdminRoute>
+        )
+      },
+      {
+        path: "events/:id/edit",
+        element: (
+          <RequireAdminRoute>
+            <EventEditorPage />
+          </RequireAdminRoute>
         )
       },
       {

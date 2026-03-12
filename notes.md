@@ -191,3 +191,20 @@
    - 稳定做法是让 `__init__.py` 保持为空或只暴露轻量符号，路由对象只在应用装配处显式导入
 3. 前端仓库仅靠 `vite build` 还不够，补跑 `npx tsc --noEmit` 能额外暴露真实空值收窄问题。
    - 本次知识库接线完成后，又顺手修掉了 `RealtimeContext`、`TicketListPage`、`TicketDetailPage` 里的若干 `possibly null/undefined` 类型问题
+
+## 2026-03-12 Event 模块规则层重构
+
+1. 当业务文档要求的 Event 是“规则定义”而仓库现有实现是“运行态队列”时，不要直接复用同一张表承载两种语义。
+   - 本次稳定做法是保留 `events / event_bindings` 作为内部调度队列，再新增 `event_rules / event_rule_bindings` 作为管理员可见的规则定义层
+   - 这样 `/api/v1/events` 可以切到规则 CRUD，而 `sweep_due_events` 仍然继续消费内部队列，不会把调度运行态暴露成用户看到的 Event 列表
+2. Figma Make 项目在拿不到 `node-id` 时，仍然可以通过 `file://figma/make/source/<fileKey>/src/app/pages/*.tsx` 直接读取页面源码，把它当成页面结构和视觉层级的真值。
+   - 这次 Event 列表页、详情页、编辑页就是基于 Make 源码资源还原，而不是依赖普通设计稿的节点截图工作流
+3. 自定义表单校验如果要给前端字段级错误提示，后端不要在首个错误就提前返回。
+   - 本次 Event 规则创建接口需要同时返回 `task_template_ids` 和 `filters[0].operator` 的错误
+   - 稳定做法是先聚合 filter/time_rule/task_template 等所有业务校验错误，再统一返回 `{ message, field_errors }`
+4. 从 `git worktree` 直接执行发布脚本时，要先确认当前工作树下是否真的存在独立 `.venv`。
+   - 本次 `scripts/deploy_preview.sh` 默认调用 `${ROOT_DIR}/.venv/bin/pytest`，在 worktree 场景下会因为本地没有 `.venv` 直接失败
+   - 如果测试已经在主工作区或共享虚拟环境里完成，短期可用 `RUN_TESTS=0 ./scripts/deploy_preview.sh` 继续发布；更长期的做法是让脚本对 worktree 的共享环境有显式兜底
+5. 浏览器端在 HTTP 预览环境里不能默认假设 `crypto.randomUUID()` 可用。
+   - 这次 Event 新建页点击“添加优先级/工单分类/风险分数/创建时间”时直接崩溃，根因是当前预览站点跑在非 HTTPS 安全上下文，`crypto.randomUUID` 不存在
+   - 稳定做法是统一走本地 `createClientId` 这类兜底 helper：优先用 `globalThis.crypto?.randomUUID()`，不可用时回退到时间戳 + 计数器 + 随机串

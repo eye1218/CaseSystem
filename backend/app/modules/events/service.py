@@ -13,40 +13,15 @@ from ...auth import ActorContext
 from ...enums import RoleCode
 from ...security import utcnow
 from ...worker.celery_app import celery_app
+from ..tasks.service import (
+    list_bindable_task_templates,
+    serialize_bound_task_templates,
+    validate_bindable_task_template_ids,
+)
 from ..tickets.models import Ticket
 from ..tickets.seed_data import CATEGORY_NAMES
 from .enums import EventQueueStatus, EventQueueType, EventRuleStatus, EventRuleType
 from .models import Event, EventBinding, EventRule, EventRuleBinding
-
-
-TASK_TEMPLATE_LIBRARY: tuple[dict[str, str], ...] = (
-    {
-        "id": "tpl-001",
-        "name": "高优先级通知模板",
-        "description": "命中规则后通知值班分析师与管理员。",
-        "group": "notification",
-    },
-    {
-        "id": "tpl-002",
-        "name": "计时巡检模板",
-        "description": "按设定时间补发巡检与跟进任务。",
-        "group": "follow_up",
-    },
-    {
-        "id": "tpl-003",
-        "name": "超时升级模板",
-        "description": "响应或处置超时后创建升级任务。",
-        "group": "escalation",
-    },
-    {
-        "id": "tpl-004",
-        "name": "关闭复核模板",
-        "description": "工单关闭后触发收尾复核流程。",
-        "group": "review",
-    },
-)
-
-TASK_TEMPLATE_MAP = {item["id"]: item for item in TASK_TEMPLATE_LIBRARY}
 
 TRIGGER_POINT_LABELS: dict[str, str] = {
     "ticket.created": "工单创建",
@@ -273,7 +248,7 @@ def _normalize_time_rule(event_type: str, raw_rule: dict[str, Any]) -> dict[str,
     raise _validation_error(errors)
 
 
-def _normalize_rule_payload(data: dict[str, Any]) -> dict[str, Any]:
+def _normalize_rule_payload(db: Session, data: dict[str, Any]) -> dict[str, Any]:
     field_errors: dict[str, str] = {}
 
     name = str(data.get("name") or "").strip()
@@ -298,8 +273,15 @@ def _normalize_rule_payload(data: dict[str, Any]) -> dict[str, Any]:
     task_template_ids = list(dict.fromkeys(task_template_ids))
     if not task_template_ids:
         field_errors["task_template_ids"] = "At least one task template is required"
-    elif any(task_template_id not in TASK_TEMPLATE_MAP for task_template_id in task_template_ids):
-        field_errors["task_template_ids"] = "One or more task templates do not exist"
+    else:
+        try:
+            task_template_ids = validate_bindable_task_template_ids(db, task_template_ids)
+        except Exception as exc:
+            detail = getattr(exc, "detail", None)
+            if isinstance(detail, dict):
+                field_errors.update(dict(detail.get("field_errors", {})))
+            else:
+                raise
 
     normalized_filters: list[dict[str, Any]] = []
     try:
@@ -348,20 +330,6 @@ def _ensure_unique_code(db: Session, code: str, *, exclude_rule_id: str | None =
     if exclude_rule_id is not None and existing.id == exclude_rule_id:
         return
     raise EventOperationError(409, "Event code already exists")
-
-
-def _bound_task_payload(task_template_id: str) -> dict[str, str]:
-    item = TASK_TEMPLATE_MAP[task_template_id]
-    return {
-        "id": item["id"],
-        "name": item["name"],
-        "description": item["description"],
-        "group": item["group"],
-    }
-
-
-def _serialize_bound_tasks(task_template_ids: list[str]) -> list[dict[str, str]]:
-    return [_bound_task_payload(task_template_id) for task_template_id in task_template_ids]
 
 
 def _trigger_summary(trigger_point: str, event_type: str, time_rule: dict[str, Any]) -> str:
@@ -424,7 +392,7 @@ def _rule_detail(db: Session, rule: EventRule) -> dict[str, Any]:
         "tags": list(rule.tags or []),
         "filters": list(rule.filter_config or []),
         "time_rule": dict(rule.time_rule_config or {}),
-        "bound_tasks": _serialize_bound_tasks(task_template_ids),
+        "bound_tasks": serialize_bound_task_templates(db, task_template_ids),
         "filter_summary": _filter_summary(list(rule.filter_config or [])),
         "trigger_summary": _trigger_summary(
             rule.trigger_point,
@@ -457,9 +425,9 @@ def _rule_summary(db: Session, rule: EventRule) -> dict[str, Any]:
     }
 
 
-def list_task_templates(actor: ActorContext) -> list[dict[str, str]]:
+def list_task_templates(db: Session, actor: ActorContext) -> list[dict[str, str]]:
     _require_admin_actor(actor)
-    return [dict(item) for item in TASK_TEMPLATE_LIBRARY]
+    return list_bindable_task_templates(db, actor)
 
 
 def create_event_rule(
@@ -469,7 +437,7 @@ def create_event_rule(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
     _require_admin_actor(actor)
-    normalized = _normalize_rule_payload(payload)
+    normalized = _normalize_rule_payload(db, payload)
     _ensure_unique_code(db, normalized["code"])
 
     now = utcnow()
@@ -570,7 +538,7 @@ def update_event_rule(
     }
     merged_payload.update(payload)
 
-    normalized = _normalize_rule_payload(merged_payload)
+    normalized = _normalize_rule_payload(db, merged_payload)
     _ensure_unique_code(db, normalized["code"], exclude_rule_id=rule.id)
 
     rule.name = normalized["name"]

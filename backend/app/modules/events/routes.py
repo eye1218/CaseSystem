@@ -39,9 +39,10 @@ def _raise_as_http(exc: EventOperationError) -> None:
 @event_router.get("/api/v1/events/task-templates", response_model=EventTaskTemplateListResponse)
 def event_task_template_list(
     actor: Annotated[ActorContext, Depends(require_auth)],
+    db: Annotated[Session, Depends(get_db)],
 ) -> EventTaskTemplateListResponse:
     try:
-        items = list_task_templates(actor)
+        items = list_task_templates(db, actor)
     except EventOperationError as exc:
         _raise_as_http(exc)
 

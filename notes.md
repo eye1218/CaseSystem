@@ -251,3 +251,17 @@
 1. 预览部署脚本同步整个仓库时，需要显式排除本地运行产物目录，不要把开发机上的报告存储文件带到远端。
    - 这次实际工作树里存在未跟踪的 `backend/.runtime/`
    - 稳定做法是在 `rsync` 排除列表里同时忽略 `.runtime` 和 `backend/.runtime`
+
+## 2026-03-13 任务模块实现
+
+1. 这台机器上的命令可用性不能想当然依赖 `python` 和裸 `uvicorn`。
+   - 当前环境没有可直接使用的 `python`
+   - 本地后端启动与测试应优先使用 `python3`
+   - 启动服务时优先使用 `python3 -m uvicorn app.main:app --app-dir backend`，不要假设 PATH 里已有 `uvicorn`
+2. 在没有独立 worktree `.venv` 的情况下，如果需要把 `pyproject.toml` 里的新正式依赖装到当前用户环境，当前机器可用的入口是 `$HOME/Library/Python/3.9/bin/pip3`。
+   - 这次为同步 `httpx` 等依赖，实际使用的是 `$HOME/Library/Python/3.9/bin/pip3 install -e '.[dev]'`
+   - 直接假设 `pip` / `pip3` 在 PATH 上可写，风险较高
+3. 使用 Figma HTML-to-Design 捕获本地 SPA 页面时，如果页面已经完成加载，再单纯补 `#figmacapture=...` hash，脚本不一定会真正发起提交。
+   - 这次 `generate_figma_design` 的 `existingFile` 捕获一直停在 `pending`
+   - 页面里虽然已经存在 `window.figma`，但没有出现提交请求
+   - 更稳妥的做法是确认脚本已加载后，直接在页面里执行 `window.figma.captureForDesign({ captureId, endpoint, selector: 'body' })`

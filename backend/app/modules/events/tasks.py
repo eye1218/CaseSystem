@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from celery import group
 
+from ...config import Settings
 from ...security import utcnow
 from ...worker.celery_app import celery_app
 from ...worker.task_base import db_session
+from ..tasks.service import create_task_instance_for_binding, execute_task_instance
 from .service import (
     dispatch_timeout_signal,
     list_due_pending_event_ids,
@@ -18,12 +20,21 @@ from .service import (
 def dispatch_event_binding(
     *, event_id: str, binding_id: str, task_template_id: str, payload: dict[str, object]
 ) -> dict[str, object]:
-    return {
-        "event_id": event_id,
-        "binding_id": binding_id,
-        "task_template_id": task_template_id,
-        "payload": payload,
-    }
+    settings = Settings()
+    with db_session() as db:
+        created = create_task_instance_for_binding(
+            db,
+            event_id=event_id,
+            binding_id=binding_id,
+            task_template_id=task_template_id,
+            payload=payload,
+        )
+    with db_session() as db:
+        return execute_task_instance(
+            db,
+            settings,
+            task_instance_id=str(created["task_instance_id"]),
+        )
 
 
 @celery_app.task(name="app.modules.events.tasks.sweep_due_events")

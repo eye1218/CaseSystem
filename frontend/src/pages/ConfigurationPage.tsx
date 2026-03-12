@@ -1,4 +1,5 @@
 import {
+  Bell,
   ChevronRight,
   FileCog,
   FileCode,
@@ -44,6 +45,17 @@ const SUB_MODULES: SubModule[] = [
     path: "/configuration/templates",
     icon: <FileCode className="h-5 w-5 text-blue-500" />,
     tags: ["Email", "Webhook", "Jinja2"],
+    adminOnly: true
+  },
+  {
+    id: "task-templates",
+    titleZh: "任务模板",
+    titleEn: "Task Templates",
+    descZh: "维护 Event 可绑定的 Email / Webhook 任务模板，定义收件规则、引用模板与启停状态。",
+    descEn: "Manage bindable Email / Webhook task templates for Event rules, including recipient rules, render-template references, and status.",
+    path: "/configuration/task-templates",
+    icon: <Bell className="h-5 w-5 text-blue-500" />,
+    tags: ["Event", "Email", "Webhook"],
     adminOnly: true
   }
 ];

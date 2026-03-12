@@ -21,13 +21,16 @@ import remarkGfm from "remark-gfm";
 import { Link, useParams } from "react-router-dom";
 
 import { ApiError } from "../api/client";
+import { getKnowledgeArticle } from "../api/knowledge";
 import { addTicketComment, getTicketDetail, getTicketLive, runTicketAction, updateTicket } from "../api/tickets";
+import KnowledgeDrawer from "../components/KnowledgeDrawer";
 import RelatedKnowledgePanel from "../components/RelatedKnowledgePanel";
 import TicketReportSections from "../components/TicketReportSections";
 import { ticketCategoryOptions } from "../constants/ticketCategories";
 import { useAuth } from "../contexts/AuthContext";
 import { useLanguage } from "../contexts/LanguageContext";
 import { useRealtime } from "../contexts/RealtimeContext";
+import type { KnowledgeArticleDetail, KnowledgeArticleSummary } from "../types/knowledge";
 import type { TicketActivityItem, TicketDetail, TicketLive, TicketPriority } from "../types/ticket";
 import { formatApiDateTime, parseApiDate } from "../utils/datetime";
 
@@ -300,6 +303,10 @@ export default function TicketDetailPage() {
   const [commentVisibility, setCommentVisibility] = useState<"PUBLIC" | "INTERNAL">("INTERNAL");
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const [knowledgeDrawerOpen, setKnowledgeDrawerOpen] = useState(false);
+  const [knowledgeDrawerLoading, setKnowledgeDrawerLoading] = useState(false);
+  const [knowledgeDrawerError, setKnowledgeDrawerError] = useState("");
+  const [knowledgeDrawerArticle, setKnowledgeDrawerArticle] = useState<KnowledgeArticleDetail | null>(null);
   const [form, setForm] = useState<EditFormState>({
     title: "",
     description: "",
@@ -336,6 +343,13 @@ export default function TicketDetailPage() {
     return () => {
       cancelled = true;
     };
+  }, [id]);
+
+  useEffect(() => {
+    setKnowledgeDrawerOpen(false);
+    setKnowledgeDrawerLoading(false);
+    setKnowledgeDrawerError("");
+    setKnowledgeDrawerArticle(null);
   }, [id]);
 
   useEffect(() => {
@@ -451,6 +465,29 @@ export default function TicketDetailPage() {
       setError(submitError instanceof Error ? submitError.message : "Update failed");
     } finally {
       setSubmitting(null);
+    }
+  };
+
+  const handleKnowledgeSelect = async (article: KnowledgeArticleSummary) => {
+    setKnowledgeDrawerOpen(true);
+    setKnowledgeDrawerError("");
+
+    if (knowledgeDrawerArticle?.id === article.id) {
+      return;
+    }
+
+    setKnowledgeDrawerLoading(true);
+    setKnowledgeDrawerArticle(null);
+
+    try {
+      const payload = await getKnowledgeArticle(article.id);
+      setKnowledgeDrawerArticle(payload);
+    } catch (loadError) {
+      const message = loadError instanceof Error ? loadError.message : "Failed to load knowledge article";
+      setKnowledgeDrawerError(message);
+      setError(message);
+    } finally {
+      setKnowledgeDrawerLoading(false);
     }
   };
 
@@ -832,6 +869,9 @@ export default function TicketDetailPage() {
                   void loadDetail(id);
                 }
               }}
+              onSelectArticle={(article) => {
+                void handleKnowledgeSelect(article);
+              }}
             />
           ) : null}
 
@@ -886,6 +926,19 @@ export default function TicketDetailPage() {
             </div>
           </div>
         </aside>
+
+        <KnowledgeDrawer
+          article={knowledgeDrawerArticle}
+          open={knowledgeDrawerOpen}
+          onClose={() => {
+            setKnowledgeDrawerOpen(false);
+            setKnowledgeDrawerLoading(false);
+            setKnowledgeDrawerError("");
+          }}
+          language={language}
+          loading={knowledgeDrawerLoading}
+          errorMessage={knowledgeDrawerError}
+        />
       </div>
 
       {error && (

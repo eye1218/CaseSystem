@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import MainLayout from "../components/MainLayout";
 import RequireAdminRoute from "../components/RequireAdminRoute";
+import RequireInternalRoute from "../components/RequireInternalRoute";
 import RequireInternalKnowledge from "../components/RequireInternalKnowledge";
 import EventDetailPage from "../pages/EventDetailPage";
 import EventEditorPage from "../pages/EventEditorPage";
@@ -18,6 +19,8 @@ import PlaceholderPage from "../pages/PlaceholderPage";
 import ConfigurationPage from "../pages/ConfigurationPage";
 import ReportTemplatesPage from "../pages/ReportTemplatesPage";
 import ReportsPage from "../pages/ReportsPage";
+import TasksPage from "../pages/TasksPage";
+import TaskTemplatesPage from "../pages/TaskTemplatesPage";
 import TemplateRenderingPage from "../pages/TemplateRenderingPage";
 
 export const router = createBrowserRouter([
@@ -122,6 +125,14 @@ export const router = createBrowserRouter([
         )
       },
       {
+        path: "tasks",
+        element: (
+          <RequireInternalRoute>
+            <TasksPage />
+          </RequireInternalRoute>
+        )
+      },
+      {
         path: "reports",
         element: <ReportsPage />
       },
@@ -140,6 +151,14 @@ export const router = createBrowserRouter([
       {
         path: "configuration/report-templates",
         element: <ReportTemplatesPage />
+      },
+      {
+        path: "configuration/task-templates",
+        element: (
+          <RequireAdminRoute>
+            <TaskTemplatesPage />
+          </RequireAdminRoute>
+        )
       },
       {
         path: "users",

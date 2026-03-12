@@ -21,6 +21,15 @@ class Settings(BaseSettings):
     report_storage_dir: str = ".runtime/report-storage"
     cookie_secure: bool = False
     cookie_domain: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int = 25
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from_email: str = "noreply@casesystem.local"
+    smtp_use_ssl: bool = False
+    smtp_starttls: bool = False
+    smtp_timeout_seconds: float = 10.0
+    webhook_timeout_seconds: float = 10.0
     allowed_origins: list[str] = Field(
         default_factory=lambda: [
             "https://testserver",

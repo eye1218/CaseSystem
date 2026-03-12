@@ -1,15 +1,18 @@
 import { type ReactNode, useEffect, useRef } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { BookOpen, Clock, Download, ExternalLink, Hash, Tag, User, X } from "lucide-react";
+import { BookOpen, Clock, Download, ExternalLink, Tag, ThumbsUp, User, X } from "lucide-react";
 
-import type { TicketKnowledgeArticle } from "../types/ticket";
+import type { KnowledgeArticleDetail } from "../types/knowledge";
+import { formatApiDateTime } from "../utils/datetime";
 
 interface KnowledgeDrawerProps {
-  article: TicketKnowledgeArticle | null;
+  article: KnowledgeArticleDetail | null;
   open: boolean;
   onClose: () => void;
   language: "zh" | "en";
+  loading?: boolean;
+  errorMessage?: string | null;
 }
 
 type MarkdownProps = { children?: ReactNode; className?: string };
@@ -63,7 +66,14 @@ function downloadMarkdown(content: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export default function KnowledgeDrawer({ article, open, onClose, language }: KnowledgeDrawerProps) {
+export default function KnowledgeDrawer({
+  article,
+  open,
+  onClose,
+  language,
+  loading = false,
+  errorMessage = null
+}: KnowledgeDrawerProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -84,7 +94,7 @@ export default function KnowledgeDrawer({ article, open, onClose, language }: Kn
     return () => document.removeEventListener("keydown", handler);
   }, [onClose, open]);
 
-  const content = article?.content[language] ?? "";
+  const content = article?.content_markdown ?? "";
 
   return (
     <div
@@ -117,33 +127,27 @@ export default function KnowledgeDrawer({ article, open, onClose, language }: Kn
 
               <div className="px-4 py-3.5">
                 <h2 className="mb-2.5 text-sm font-bold leading-snug text-slate-900 dark:text-white">
-                  {article.title[language]}
+                  {article.title}
                 </h2>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
                   <span className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
-                    <Hash className="h-3 w-3" />
-                    {article.version}
+                    <Tag className="h-3 w-3" />
+                    {article.category_name}
                   </span>
                   <span className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
                     <User className="h-3 w-3" />
-                    {article.author}
+                    {article.author_name}
                   </span>
                   <span className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
                     <Clock className="h-3 w-3" />
-                    {article.updated_at}
+                    {formatApiDateTime(article.updated_at, language)}
+                  </span>
+                  <span className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+                    <ThumbsUp className="h-3 w-3" />
+                    {article.likes_count}
                   </span>
                 </div>
-                <div className="mt-2.5 flex flex-wrap gap-1.5">
-                  {article.tags.map((tag) => (
-                    <span
-                      key={tag}
-                      className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-400"
-                    >
-                      <Tag className="h-2.5 w-2.5" />
-                      {tag}
-                    </span>
-                  ))}
-                </div>
+                <p className="mt-2.5 text-xs leading-5 text-slate-500 dark:text-slate-400">{article.excerpt}</p>
               </div>
             </div>
 
@@ -171,7 +175,7 @@ export default function KnowledgeDrawer({ article, open, onClose, language }: Kn
                   {language === "zh" ? "下载 .md" : "Download .md"}
                 </button>
                 <button
-                  onClick={() => window.open("/knowledge", "_self")}
+                  onClick={() => window.open(`/knowledge/${article.id}`, "_self")}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700"
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
@@ -180,6 +184,14 @@ export default function KnowledgeDrawer({ article, open, onClose, language }: Kn
               </div>
             </div>
           </>
+        ) : loading ? (
+          <div className="flex flex-1 items-center justify-center px-6 text-sm text-slate-400 dark:text-slate-500">
+            {language === "zh" ? "正在加载知识库…" : "Loading knowledge article..."}
+          </div>
+        ) : errorMessage ? (
+          <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-rose-500 dark:text-rose-400">
+            {errorMessage}
+          </div>
         ) : (
           <div className="flex flex-1 items-center justify-center text-xs text-slate-400 dark:text-slate-600">
             {language === "zh" ? "请选择文章" : "Select an article"}

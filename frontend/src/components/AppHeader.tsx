@@ -14,6 +14,7 @@ const routeTitleMap: Record<string, string> = {
   "/sla-monitor": "nav.slaMonitor",
   "/notifications": "nav.notifications",
   "/knowledge": "nav.knowledge",
+  "/tasks": "nav.tasks",
   "/reports": "nav.reports",
   "/kpi": "nav.kpi",
   "/configuration": "nav.configuration",
@@ -45,6 +46,9 @@ export default function AppHeader() {
     }
     if (location.pathname.startsWith("/events")) {
       return "nav.events";
+    }
+    if (location.pathname.startsWith("/tasks")) {
+      return "nav.tasks";
     }
     if (location.pathname.startsWith("/configuration")) {
       return "nav.configuration";

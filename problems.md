@@ -173,3 +173,13 @@
 ## 2026-03-12 预览部署运行产物同步
 
 1. 当前工作树存在未跟踪的 `backend/.runtime/` 本地运行产物目录，而部署脚本最初会把整个仓库 `rsync` 到远端，存在把本地报告文件误同步到预览机的风险。
+
+## 2026-03-13 任务模块实现
+
+1. 当前任务模块 worktree 没有独立可直接使用的 `.venv`，且环境里没有裸 `python` 命令，`uvicorn` 也不在 PATH 上。
+   - 这次联调时必须改用 `python3`
+   - 启动服务也必须改成 `python3 -m uvicorn`
+2. Figma MCP 的本地页面捕获在已加载完成的 SPA 页面上，仅通过追加 `#figmacapture=...` hash 触发时，可能长期停留在 `pending`。
+   - 这次对任务模板页追加到已有 Figma 文件的捕获就出现了该问题
+   - 页面脚本已注入、`window.figma` 也存在，但没有自动发出提交请求
+   - 最终通过手动调用 `window.figma.captureForDesign(...)` 完成提交

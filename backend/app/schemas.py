@@ -4,6 +4,25 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .modules.tickets.schemas import (
+    LocalizedTextResponse,
+    ReportTemplateReferenceResponse,
+    ReportTemplateSummaryResponse,
+    TicketActionCommandRequest,
+    TicketActivityItemResponse,
+    TicketAlertResponse,
+    TicketCommentCreateRequest,
+    TicketCreateRequest,
+    TicketDetailResponse,
+    TicketExternalContextResponse,
+    TicketKnowledgeArticleResponse,
+    TicketListResponse,
+    TicketPermissionScopeResponse,
+    TicketReportResponse,
+    TicketSummaryResponse,
+    TicketUpdateRequest,
+)
+
 
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=64)
@@ -61,19 +80,24 @@ class SocketTokenResponse(BaseModel):
     token: str
 
 
-from .modules.tickets.schemas import (
-    LocalizedTextResponse,
-    TicketActionCommandRequest,
-    TicketActivityItemResponse,
-    TicketAlertResponse,
-    TicketCommentCreateRequest,
-    TicketCreateRequest,
-    TicketDetailResponse,
-    TicketExternalContextResponse,
-    TicketKnowledgeArticleResponse,
-    TicketListResponse,
-    TicketPermissionScopeResponse,
-    TicketReportResponse,
-    TicketSummaryResponse,
-    TicketUpdateRequest,
-)
+class ReportTemplateListResponse(BaseModel):
+    items: list["ReportTemplateSummaryResponse"]
+    total_count: int
+
+
+class ReportTemplateUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=4000)
+    status: str | None = Field(default=None, pattern="^(ACTIVE|INACTIVE)$")
+
+
+class TicketReportListResponse(BaseModel):
+    items: list["TicketReportResponse"]
+    total_count: int
+
+
+class TicketReportUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    report_type: str | None = Field(default=None, min_length=1, max_length=64)
+    note: str | None = Field(default=None, max_length=4000)
+    source_template_id: str | None = Field(default=None, min_length=1, max_length=36)

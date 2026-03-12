@@ -48,6 +48,23 @@
 1. 工单列表表头里，可排序列使用 `button`，普通列使用 `span`；虽然 JSX 上复用了同一组 Tailwind 类，但线上按钮列仍然显示成浏览器默认的 `16px` 粗体。
 2. 根因是全局 `button, input, select { font: inherit; }` 写成了未分层规则，在 Tailwind v4 下压过了工具类，导致 `text-[11px]`、`font-semibold`、`leading-none` 对按钮不生效。
 
+## 2026-03-11 报告模块工作树环境
+
+1. 从独立 `git worktree` 切出来的工作目录默认不会继承主工作区的 Python 开发依赖与 `frontend/node_modules`，直接运行 `pytest` 会因为缺少 `httpx` 导入 `fastapi.testclient` 失败，直接运行 `npm run build` 会因为缺少 `vite` 报 `command not found`。
+
+## 2026-03-11 报告模块前端类型校验
+
+1. 前端最初只有 `vite build`，没有单独跑过 `tsc --noEmit`；补跑类型检查后暴露出仓库缺少 `frontend/src/vite-env.d.ts`，导致 `.svg` 资源导入在 TypeScript 下统一报模块声明缺失。
+
+## 2026-03-12 报告模块预览部署
+
+1. 预览机 `root@192.168.2.170:/root/workspace/CaseSystem` 上仍残留旧目录结构；执行 `rsync --delete` 时会对 `tests`、`casesystem`、`backend/app/modules/*` 等路径打印 `cannot delete non-empty directory` 警告，虽然本次未阻断部署，但说明远端工作目录并非干净镜像。
+
+## 2026-03-12 知识库模块实现
+
+1. 本地第一次对知识库页面做浏览器 smoke test 时，服务起在 `127.0.0.1:8011`，但该端口不在后端 `allowed_origins` 白名单内，导致登录请求被 CSRF 校验直接拦成 `403`。
+2. 前端错误处理最初没有正确透传后端 JSON `detail`，导致知识库详情 `404` 等业务错误会退化成通用 `Request failed`，不利于页面按设计显示精确文案。
+
 ## 2026-03-11 后端结构抽取（core/infra）
 
 1. 当前 worktree 没有独立 `.venv`，直接执行 `.venv/bin/python` 会报 `no such file or directory`，需要显式使用主仓库虚拟环境路径。
@@ -59,8 +76,8 @@
 
 ## 2026-03-11 Auth domain modular migration
 
-1. During app/auth.py extraction to backend/app/modules/auth/service.py, basedpyright reported many Optional-member errors in existing auth flows because helper _raise_login_failed was typed as returning None instead of non-returning.
-2. Issue was resolved by changing _raise_login_failed to NoReturn and adding explicit narrowing/casts at guarded access points; runtime auth regression tests remained green afterward.
+1. During `app/auth.py` extraction to `backend/app/modules/auth/service.py`, basedpyright reported many Optional-member errors in existing auth flows because helper `_raise_login_failed` was typed as returning `None` instead of non-returning。
+2. Issue was resolved by changing `_raise_login_failed` to `NoReturn` and adding explicit narrowing/casts at guarded access points; runtime auth regression tests remained green afterward.
 
 ## 2026-03-11 Event contracts and migration verification
 
@@ -147,3 +164,12 @@
    - 已通过新增带回退逻辑的 `createClientId` helper 并替换 Event 编辑页里的直接调用修复
 7. 预览部署脚本补上 worktree 共享 `.venv` 回退后，首次标准部署仍会在本地测试阶段失败，因为共享环境虽然存在，但依赖未同步到最新 `pyproject.toml`，具体表现为 `ModuleNotFoundError: No module named 'socketio'`。
 8. 重新跑完整测试后，又暴露出 `tickets/service.py` 在 Python 3.9 下使用 `type_cast(str | None, ...)` 的运行时兼容性问题，多个工单详情接口会直接抛 `TypeError`。
+
+## 2026-03-12 远程 main 合并
+
+1. 当前分支在 merge 前带有大量未提交改动和新增文件，且与远程 `main` 修改范围明显重叠，直接合并存在覆盖风险。
+2. 在同一个 worktree 上并行执行会写 index 的 Git 命令时，会触发 `.git/worktrees/.../index.lock` 竞争；这次实际出现在并行 `git checkout` 过程中。
+
+## 2026-03-12 预览部署运行产物同步
+
+1. 当前工作树存在未跟踪的 `backend/.runtime/` 本地运行产物目录，而部署脚本最初会把整个仓库 `rsync` 到远端，存在把本地报告文件误同步到预览机的风险。

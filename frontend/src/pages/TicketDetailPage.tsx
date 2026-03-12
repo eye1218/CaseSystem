@@ -4,9 +4,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock3,
-  Download,
   Edit3,
-  FileText,
   Inbox,
   Lock,
   MessageSquare,
@@ -25,6 +23,7 @@ import { Link, useParams } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { addTicketComment, getTicketDetail, getTicketLive, runTicketAction, updateTicket } from "../api/tickets";
 import RelatedKnowledgePanel from "../components/RelatedKnowledgePanel";
+import TicketReportSections from "../components/TicketReportSections";
 import { ticketCategoryOptions } from "../constants/ticketCategories";
 import { useAuth } from "../contexts/AuthContext";
 import { useLanguage } from "../contexts/LanguageContext";
@@ -836,37 +835,17 @@ export default function TicketDetailPage() {
             />
           ) : null}
 
-          <div className="rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <FileText className="h-4 w-4 text-blue-500" />
-                <h2 className="text-sm font-semibold text-slate-900 dark:text-white">{language === "zh" ? "关联报告" : "Related Reports"}</h2>
-              </div>
-              <span className="text-xs text-slate-400">{detail.reports.length}</span>
-            </div>
-            <div className="max-h-[336px] space-y-2.5 overflow-y-auto px-5 py-4">
-              {detail.reports.map((report) => (
-                <div key={report.id} className="rounded-2xl border border-slate-200 px-4 py-3.5 dark:border-slate-700">
-                  <div className="mb-1.5 flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-[11px] font-mono text-slate-400">{report.report_no}</div>
-                      <div className="text-sm font-medium leading-6 text-slate-800 dark:text-slate-100">{report.title[language]}</div>
-                    </div>
-                    <a
-                      href={`${report.download_path}?lang=${language}`}
-                      className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition-colors hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600 dark:border-slate-700 dark:hover:border-blue-700 dark:hover:bg-blue-950/30 dark:hover:text-blue-300"
-                    >
-                      <Download className="h-4 w-4" />
-                    </a>
-                  </div>
-                  <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                    <span>{report.type[language]}</span>
-                    <span>{report.created_at}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          <TicketReportSections
+            currentRole={user?.active_role}
+            detail={detail}
+            language={language}
+            onError={setError}
+            onRefresh={async () => {
+              if (id) {
+                await loadDetail(id);
+              }
+            }}
+          />
 
           <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <div className="mb-3 flex items-center gap-2">

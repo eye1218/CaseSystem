@@ -52,8 +52,6 @@
 1. Figma Make 文件和普通 Design 文件不同：
    - `get_metadata` / `get_screenshot` 不适用于 Make 文件
    - 应优先通过 `get_design_context` 读取 Make 项目的源码资源，再结合预览页做视觉校对
-   - 远程 Figma MCP 在读取 Make 项目时，可以直接对 `makeFileKey` 调用 `get_design_context`
-   - 当前实践里传入占位节点 `nodeId="0:0"` 即可拿到整份 Make 的源码资源列表，再按 `src/app/pages/*`、`src/styles/*` 精确读取
 2. HTTP 预览环境下不要继续使用 `__Host-` / `__Secure-` 前缀 cookie 名。
    - 这两个前缀要求浏览器必须同时满足 `Secure`
    - 当 `cookie_secure=false` 且页面走 `http://` 时，浏览器会直接拒收 cookie，导致登录成功后后续接口仍然是未认证状态
@@ -64,9 +62,6 @@
 4. 本地 `npm` 缓存目录如果残留 root-owned 文件，`npm ci` 会直接报权限错误。
    - 部署脚本里应显式指定仓库内缓存目录，例如 `.npm-cache`
    - 这样可以避免依赖用户主目录下不可控的历史缓存状态
-5. 预览部署时如果 `rsync --delete` 输出 `cannot delete non-empty directory: casesystem`，不一定表示本次部署失败。
-   - 当前实践里该提示未阻断后续依赖安装、`systemd` 重启和健康检查
-   - 应以脚本末尾的远端 `/healthz`、登录页和业务接口校验结果作为最终判定
 
 ## 2026-03-10 工单详情页与建单联调
 
@@ -90,10 +85,38 @@
    - 最快的定位方式是直接在浏览器里读取 `getComputedStyle`
    - 本次线上表头的 `button` 实际计算值是 `16px / 700 / 24px`，而普通表头 `span` 是 `11px / 600 / 11px`
 
+## 2026-03-11 报告模块工作树环境
+
+1. 使用独立 `git worktree` 开发这个仓库时，需要把依赖准备动作视为工作树级别而不是仓库级别。
+   - Python 侧如果直接跑系统 `pytest`，需要先补 `httpx`，否则 `fastapi.testclient` 无法导入
+   - 前端侧进入新的工作树后需要在 `frontend/` 下重新执行一次 `npm install`，否则 `npm run build` 会因为找不到 `vite` 失败
+
+## 2026-03-11 报告模块前端类型校验
+
+1. 这个前端仓库默认只有 `vite build`，不会自动替代 TypeScript 的独立类型校验。
+   - 在交付前最好额外执行一次 `npx tsc --noEmit`
+   - 如果仓库里没有标准的 `frontend/src/vite-env.d.ts`，静态资源导入（例如 `.svg`）会在 `tsc` 阶段统一报模块声明缺失
+   - 最小修复方式是补上 `/// <reference types="vite/client" />`
+
+## 2026-03-12 报告模块预览部署
+
+1. 当前预览机目录上存在历史残留文件树时，`rsync --delete` 不一定能把不再受版本控制的旧目录清干净。
+   - 本次在远端看到 `tests`、`casesystem`、`backend/app/modules/*` 等路径出现 `cannot delete non-empty directory`
+   - 如果后续需要彻底收敛远端目录结构，应该安排一次受控的远端清理，而不是假设普通增量发布会自动抹平历史目录
+
+## 2026-03-12 知识库模块实现
+
+1. 本地浏览器联调知识库页面时，后端端口如果不在 `allowed_origins` 白名单内，登录请求会被 CSRF 拦截。
+   - 这次在 `127.0.0.1:8011` 上复现了 `403`
+   - 当前默认白名单已覆盖 `127.0.0.1:8010`
+   - 本地 smoke test 最好直接复用 `8010`，不要把端口问题误判成账号、cookie 或知识库接口错误
+2. 前端 `apiFetch` 需要在抛错前先稳定解析 JSON 错误体，再把 `detail` 透传给 UI。
+   - 如果把 `throw new Error(detail)` 放进解析 JSON 的 `try` 代码块里，会被自己的 `catch` 意外吞掉
+   - 更稳妥的写法是先提取 `detail`，再在 `try/catch` 外统一抛出错误
+
 ## 2026-03-11 后端结构抽取（core/infra）
 
 1. 在 Git worktree 中做后端验证时，优先复用主仓库虚拟环境并显式设置导入路径：
-   - `PYTHONPATH=backend /Volumes/data/workspace/python/CaseSystem/.venv/bin/python -c "from app.main import create_app"`
    - `PYTHONPATH=backend /Volumes/data/workspace/python/CaseSystem/.venv/bin/pytest backend/tests -q`
 2. 做分层迁移（如 `app/*` -> `app/core`、`app/infra`）时，可先保留薄兼容模块转发导入，降低一次性全量改 import 的风险，便于后续分波次演进。
 
@@ -114,9 +137,9 @@
 ## 2026-03-11 Auth domain modular migration
 
 1. Refactoring a large auth service into a new module package can expose hidden type-flow assumptions.
-   - Mark guard helpers that always raise as NoReturn (e.g., _raise_login_failed) so static analysis correctly narrows Optional values.
-   - Keep behavior stable by pairing runtime guards with narrow typing updates (assert/cast) rather than rewriting auth logic.
-2. For phased modularization, keep compatibility shims at old import paths (app/auth.py, app/policies.py, app/schemas.py auth re-exports) while routing FastAPI endpoints from the new domain router; this reduces break risk for existing imports/tests.
+   - Mark guard helpers that always raise as NoReturn (e.g., `_raise_login_failed`) so static analysis correctly narrows Optional values.
+   - Keep behavior stable by pairing runtime guards with narrow typing updates (`assert`/`cast`) rather than rewriting auth logic.
+2. For phased modularization, keep compatibility shims at old import paths (`app/auth.py`, `app/policies.py`, `app/schemas.py` auth re-exports) while routing FastAPI endpoints from the new domain router; this reduces break risk for existing imports/tests.
 
 ## 2026-03-11 Event migration contract
 
@@ -185,7 +208,7 @@
 
 1. 如果功能最初是在独立 `git worktree` 内完成，回到主工作区时必须重新核对真实路由挂载关系，不能假设“实现过一次就已经在当前仓库里”。
    - 这次根因不是缓存，而是主工作区的 `frontend/src/app/routes.tsx` 仍然把 `/knowledge` 指向 `PlaceholderPage`
-   - 最快的确认方式是直接 `rg 'path: \"knowledge\"|PlaceholderPage' frontend/src/app/routes.tsx`
+   - 最快的确认方式是直接 `rg 'path: "knowledge"|PlaceholderPage' frontend/src/app/routes.tsx`
 2. 当前后端模块化结构里，凡是会被 `app.models` 导入以注册 ORM 表的子模块包，`__init__.py` 都应该保持最小化。
    - 如果在这里导入 `routes`，很容易触发 `app.models -> 模块包 -> routes -> auth -> app.models` 的循环依赖
    - 稳定做法是让 `__init__.py` 保持为空或只暴露轻量符号，路由对象只在应用装配处显式导入
@@ -204,7 +227,7 @@
    - 稳定做法是先聚合 filter/time_rule/task_template 等所有业务校验错误，再统一返回 `{ message, field_errors }`
 4. 从 `git worktree` 直接执行发布脚本时，要先确认当前工作树下是否真的存在独立 `.venv`。
    - 之前 `scripts/deploy_preview.sh` 默认调用 `${ROOT_DIR}/.venv/bin/pytest`，在 worktree 场景下会因为本地没有 `.venv` 直接失败
-   - 现在稳定做法是让脚本自动解析 `git` common dir：优先使用当前工作区 `.venv`，不存在时回退到主工作区共享 `.venv`；只有再找不到时才要求显式传 `LOCAL_PYTHON`
+   - 现在稳定做法是让脚本自动解析 git common dir：优先使用当前工作区 `.venv`，不存在时回退到主工作区共享 `.venv`；只有再找不到时才要求显式传 `LOCAL_PYTHON`
 5. 浏览器端在 HTTP 预览环境里不能默认假设 `crypto.randomUUID()` 可用。
    - 这次 Event 新建页点击“添加优先级/工单分类/风险分数/创建时间”时直接崩溃，根因是当前预览站点跑在非 HTTPS 安全上下文，`crypto.randomUUID` 不存在
    - 稳定做法是统一走本地 `createClientId` 这类兜底 helper：优先用 `globalThis.crypto?.randomUUID()`，不可用时回退到时间戳 + 计数器 + 随机串
@@ -214,3 +237,17 @@
 7. 在 Python 3.9 运行时，不要把 `str | None` 这类 PEP 604 联合类型直接放进 `typing.cast(...)` 之类会实际求值的表达式里。
    - 这次 `tickets/service.py` 在 `type_cast(str | None, access.get(...))` 处触发了 `TypeError`
    - 兼容做法是改用 `Optional[str]`，只把 `|` 联合语法留在注解位置，而不是运行时会执行的表达式里
+
+## 2026-03-12 远程 main 合并
+
+1. 在带大量未提交改动的 worktree 上合并远程 `main` 时，先做本地 checkpoint commit 比直接硬 merge 更稳。
+   - 这样即使冲突很多，也能保证当前实现有明确回退点，不会因为一次失败合并把工作区改脏到不可恢复
+2. 同一个 git worktree 上不要并行执行两个会写 index 的 Git 命令。
+   - 这次并行 `git checkout` 触发了 `.git/worktrees/.../index.lock` 竞争
+   - 处理方式是改回串行执行，避免把正常的冲突解决误判成仓库损坏
+
+## 2026-03-12 预览部署运行产物隔离
+
+1. 预览部署脚本同步整个仓库时，需要显式排除本地运行产物目录，不要把开发机上的报告存储文件带到远端。
+   - 这次实际工作树里存在未跟踪的 `backend/.runtime/`
+   - 稳定做法是在 `rsync` 排除列表里同时忽略 `.runtime` 和 `backend/.runtime`

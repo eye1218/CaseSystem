@@ -81,6 +81,8 @@ rsync -az --delete \
   --exclude '.git' \
   --exclude '.venv' \
   --exclude '.npm-cache' \
+  --exclude '.runtime' \
+  --exclude 'backend/.runtime' \
   --exclude 'frontend/node_modules' \
   --exclude '__pycache__' \
   --exclude '.pytest_cache' \

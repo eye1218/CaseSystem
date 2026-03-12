@@ -11,6 +11,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from ...auth import ActorContext
 from ...enums import RoleCode, TicketMainStatus, TicketPriority, TicketSubStatus
+from ...reporting import list_reports_for_ticket_detail, list_templates_for_ticket_detail
 from ...security import utcnow
 from ..events.service import (
     cancel_pending_ticket_events,
@@ -402,7 +403,6 @@ def _detail_base_entry(db: Session, ticket: Ticket) -> dict[str, object]:
             "is_deleted": ticket.is_deleted,
         },
         "activity_feed": _activity_feed_raw(db, ticket.id),
-        "reports": _reports(ticket),
         "raw_alerts": _raw_alerts(ticket),
         "siem_context_markdown": _context_markdown(ticket),
         "external_context": _external_context(ticket),
@@ -423,7 +423,16 @@ def _detail_response_from_base(
         "related_knowledge": list_related_articles_for_ticket_detail(
             db, actor, category_id=str(ticket_payload["category_id"])
         ),
-        "reports": base["reports"],
+        "report_templates": list_templates_for_ticket_detail(
+            db,
+            actor,
+            ticket_category_id=str(ticket_payload["category_id"]),
+        ),
+        "reports": list_reports_for_ticket_detail(
+            db,
+            actor,
+            ticket_id=int(ticket_payload["id"]),
+        ),
         "raw_alerts": base["raw_alerts"],
         "siem_context_markdown": base["siem_context_markdown"],
         "external_context": base["external_context"],

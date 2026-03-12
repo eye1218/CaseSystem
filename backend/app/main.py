@@ -22,6 +22,8 @@ from .modules.templates.routes import template_router
 from .modules.tickets.cache import configure_ticket_cache
 from .modules.tickets.routes import ticket_router
 from .policies import ObjectScope, RoleCode
+from .report_routes import report_router
+from .reporting import seed_reporting
 from .schemas import (
     AdminOverviewResponse,
     AuthenticatedUser,
@@ -47,6 +49,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db = session_factory()
         try:
             seed_roles(db)
+            seed_reporting(db, resolved_settings)
         finally:
             db.close()
         configure_realtime_gateway(
@@ -247,6 +250,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(realtime_router)
     app.include_router(knowledge_router)
     app.include_router(template_router)
+    app.include_router(report_router)
 
     if frontend_dist.exists():
         app.mount(

@@ -16,6 +16,8 @@ import KnowledgeListPage from "../pages/KnowledgeListPage";
 import NotificationsPage from "../pages/NotificationsPage";
 import PlaceholderPage from "../pages/PlaceholderPage";
 import ConfigurationPage from "../pages/ConfigurationPage";
+import ReportTemplatesPage from "../pages/ReportTemplatesPage";
+import ReportsPage from "../pages/ReportsPage";
 import TemplateRenderingPage from "../pages/TemplateRenderingPage";
 
 export const router = createBrowserRouter([
@@ -121,7 +123,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "reports",
-        element: <PlaceholderPage titleKey="nav.reports" description="报告模块当前仅在工单详情侧边区域提供下载入口。" />
+        element: <ReportsPage />
       },
       {
         path: "kpi",
@@ -134,6 +136,10 @@ export const router = createBrowserRouter([
       {
         path: "configuration/templates",
         element: <TemplateRenderingPage />
+      },
+      {
+        path: "configuration/report-templates",
+        element: <ReportTemplatesPage />
       },
       {
         path: "users",

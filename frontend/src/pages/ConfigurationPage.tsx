@@ -1,5 +1,6 @@
 import {
   ChevronRight,
+  FileCog,
   FileCode,
   Lock,
   Settings
@@ -23,6 +24,17 @@ interface SubModule {
 }
 
 const SUB_MODULES: SubModule[] = [
+  {
+    id: "report-templates",
+    titleZh: "报告模板",
+    titleEn: "Report Templates",
+    descZh: "维护按工单类型分发的模板文件，供内部人员下载、复用和替换。",
+    descEn: "Manage downloadable report templates by ticket category for internal workflows.",
+    path: "/configuration/report-templates",
+    icon: <FileCog className="h-5 w-5 text-blue-500" />,
+    tags: ["DOCX", "PDF", "Ticket"],
+    adminOnly: true
+  },
   {
     id: "templates",
     titleZh: "模板渲染",

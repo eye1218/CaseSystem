@@ -1,4 +1,5 @@
 import type { KnowledgeArticleSummary } from "./knowledge";
+import type { ReportSummary, ReportTemplateSummary } from "./report";
 
 export type TicketMainStatus =
   | "WAITING_RESPONSE"
@@ -66,18 +67,6 @@ export interface TicketKnowledgeArticle {
   content: LocalizedText;
 }
 
-export interface TicketReport {
-  id: string;
-  report_no: string;
-  title: LocalizedText;
-  type: LocalizedText;
-  status: "draft" | "final";
-  analyst: string;
-  created_at: string;
-  likes: number;
-  download_path: string;
-}
-
 export interface TicketAlert {
   seq: number;
   time: string;
@@ -124,7 +113,8 @@ export interface TicketDetail {
   available_actions: string[];
   activity_feed: TicketActivityItem[];
   related_knowledge: KnowledgeArticleSummary[];
-  reports: TicketReport[];
+  report_templates: ReportTemplateSummary[];
+  reports: ReportSummary[];
   raw_alerts: TicketAlert[];
   siem_context_markdown: LocalizedText;
   external_context: TicketExternalContext;

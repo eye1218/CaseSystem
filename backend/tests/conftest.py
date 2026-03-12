@@ -14,15 +14,18 @@ from app.database import Base, get_db
 from app.main import create_app
 from app.models import User, UserRole
 from app.modules.tickets.cache import reset_ticket_cache_backend
+from app.reporting import seed_reporting
 from app.security import hash_password
 from app.worker.task_base import reset_worker_session_factory, set_worker_session_factory
 
 
 @pytest.fixture
-def test_settings() -> Settings:
+def test_settings(tmp_path_factory) -> Settings:
+    storage_dir = tmp_path_factory.mktemp("report-storage")
     return Settings(
         database_url="sqlite+pysqlite:///:memory:",
         jwt_secret_key="test-secret-key-with-at-least-32-bytes",
+        report_storage_dir=str(storage_dir),
         cookie_secure=True,
         allowed_origins=["https://testserver"],
         throttle_sleep_enabled=False,
@@ -58,6 +61,7 @@ def app(test_settings: Settings):
 
     with TestingSessionLocal() as db:
         seed_roles(db)
+        seed_reporting(db, test_settings)
         db.add(
             User(
                 id="user-disabled",

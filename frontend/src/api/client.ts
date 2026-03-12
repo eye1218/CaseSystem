@@ -142,3 +142,19 @@ export async function apiDeleteJson<T>(path: string): Promise<T> {
     }
   });
 }
+
+export async function apiPostForm<T>(path: string, body: FormData): Promise<T> {
+  const csrfToken = (await issueCsrf()) || getCookie("XSRF-TOKEN");
+  if (!csrfToken) {
+    throw new Error("Missing CSRF token");
+  }
+
+  return apiFetch<T>(path, {
+    method: "POST",
+    headers: {
+      "X-CSRF-Token": csrfToken,
+      Origin: window.location.origin
+    },
+    body
+  });
+}

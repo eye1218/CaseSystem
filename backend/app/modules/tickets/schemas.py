@@ -58,15 +58,38 @@ class TicketKnowledgeArticleResponse(BaseModel):
     content: LocalizedTextResponse
 
 
+class ReportTemplateSummaryResponse(BaseModel):
+    id: str
+    name: str
+    description: str | None
+    ticket_category_id: str
+    status: str
+    original_filename: str
+    content_type: str | None
+    size_bytes: int
+    download_path: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReportTemplateReferenceResponse(BaseModel):
+    id: str
+    name: str
+
+
 class TicketReportResponse(BaseModel):
     id: str
-    report_no: str
-    title: LocalizedTextResponse
-    type: LocalizedTextResponse
-    status: str
-    analyst: str
-    created_at: str
-    likes: int
+    ticket_id: int
+    title: str
+    report_type: str
+    note: str | None
+    source_template: ReportTemplateReferenceResponse | None
+    original_filename: str
+    content_type: str | None
+    size_bytes: int
+    uploaded_by: str
+    created_at: datetime
+    updated_at: datetime
     download_path: str
 
 
@@ -116,6 +139,7 @@ class TicketDetailResponse(BaseModel):
     available_actions: list[str]
     activity_feed: list[TicketActivityItemResponse]
     related_knowledge: list[KnowledgeArticleSummaryResponse]
+    report_templates: list[ReportTemplateSummaryResponse]
     reports: list[TicketReportResponse]
     raw_alerts: list[TicketAlertResponse]
     siem_context_markdown: LocalizedTextResponse

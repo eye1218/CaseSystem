@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from celery import group
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -9,6 +10,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from ...auth import ActorContext
 from ...enums import RoleCode
 from ...security import utcnow
+from ...worker.celery_app import celery_app
 from .enums import EventStatus, EventType
 from .models import Event, EventBinding
 
@@ -93,7 +95,12 @@ def get_due_pending_event_with_bindings(
 
 
 def claim_due_pending_event_with_bindings(
-    db: Session, *, event_id: str, due_at: datetime, triggered_at: datetime
+    db: Session,
+    *,
+    event_id: str,
+    due_at: datetime,
+    triggered_at: datetime,
+    commit: bool = True,
 ) -> tuple[Event, list[EventBinding]] | None:
     result = db.execute(
         update(Event)
@@ -125,7 +132,51 @@ def claim_due_pending_event_with_bindings(
             .order_by(EventBinding.created_at)
         ).all()
     )
-    db.commit()
+    if commit:
+        db.commit()
+    return event, bindings
+
+
+def _build_event_binding_signatures(
+    event: Event, bindings: list[EventBinding]
+) -> list[object]:
+    return [
+        celery_app.signature(
+            "app.modules.events.tasks.dispatch_event_binding",
+            kwargs={
+                "event_id": event.id,
+                "binding_id": binding.id,
+                "task_template_id": binding.task_template_id,
+                "payload": binding.payload,
+            },
+        )
+        for binding in bindings
+    ]
+
+
+def trigger_due_pending_event_with_bindings(
+    db: Session, *, event_id: str, due_at: datetime, triggered_at: datetime
+) -> tuple[Event, list[EventBinding]] | None:
+    claimed_event = claim_due_pending_event_with_bindings(
+        db,
+        event_id=event_id,
+        due_at=due_at,
+        triggered_at=triggered_at,
+        commit=False,
+    )
+    if claimed_event is None:
+        return None
+
+    event, bindings = claimed_event
+    try:
+        signatures = _build_event_binding_signatures(event, bindings)
+        if signatures:
+            group(signatures).apply_async()
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    db.refresh(event)
     return event, bindings
 
 
@@ -431,7 +482,19 @@ def early_trigger_event(
 
     now = utcnow()
     event.trigger_time = now
-    event.updated_at = now
-    db.commit()
-    db.refresh(event)
+    db.flush()
+
+    try:
+        triggered_event = trigger_due_pending_event_with_bindings(
+            db,
+            event_id=event.id,
+            due_at=now,
+            triggered_at=now,
+        )
+    except Exception as exc:
+        raise EventOperationError(503, "Failed to dispatch event") from exc
+    if triggered_event is None:
+        raise EventOperationError(409, "Event is no longer pending")
+
+    event, _ = triggered_event
     return _build_detail(db, event)

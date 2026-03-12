@@ -2,11 +2,18 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+import pytest
 from sqlalchemy import select
 
+from app.auth import ActorContext
+from app.enums import RoleCode
+from app.modules.events import service as event_service
 from app.modules.events.enums import EventStatus, EventType
 from app.modules.events.models import Event, EventBinding
-from app.modules.events.service import claim_due_pending_event_with_bindings
+from app.modules.events.service import (
+    claim_due_pending_event_with_bindings,
+    early_trigger_event,
+)
 from app.modules.events.tasks import sweep_due_events
 from app.security import utcnow
 from .conftest import login
@@ -130,6 +137,104 @@ def test_due_event_can_only_be_claimed_once(db_session_factory):
     assert claimed_event.status == EventStatus.TRIGGERED.value
     assert [binding.task_template_id for binding in claimed_bindings] == ["template-1"]
     assert second_claim is None
+
+
+def test_sweep_due_events_keeps_event_pending_when_enqueue_fails(
+    db_session_factory, monkeypatch
+):
+    now = utcnow()
+    trigger_time = now - timedelta(minutes=1)
+
+    with db_session_factory() as db:
+        event = Event(
+            event_type=EventType.TIMED.value,
+            status=EventStatus.PENDING.value,
+            trigger_time=trigger_time,
+            title="broker failure",
+            description=None,
+            payload={},
+            created_by_user_id=None,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(event)
+        db.flush()
+        db.add(
+            EventBinding(
+                event_id=event.id,
+                task_template_id="template-1",
+                payload={"ticket_id": 1},
+            )
+        )
+        db.commit()
+        event_id = event.id
+
+    class FailingGroup:
+        def __init__(self, signatures):
+            self.signatures = signatures
+
+        def apply_async(self) -> None:
+            raise RuntimeError("broker unavailable")
+
+    monkeypatch.setattr(
+        event_service,
+        "_build_event_binding_signatures",
+        lambda event, bindings: ["signature"],
+    )
+    monkeypatch.setattr(event_service, "group", lambda signatures: FailingGroup(signatures))
+
+    with pytest.raises(RuntimeError, match="broker unavailable"):
+        sweep_due_events()
+
+    with db_session_factory() as db:
+        event = db.scalar(select(Event).where(Event.id == event_id))
+        assert event is not None
+        assert event.status == EventStatus.PENDING.value
+        assert event.triggered_at is None
+
+
+def test_early_trigger_event_executes_immediately(db_session_factory):
+    now = utcnow()
+
+    with db_session_factory() as db:
+        event = Event(
+            event_type=EventType.TIMED.value,
+            status=EventStatus.PENDING.value,
+            trigger_time=now + timedelta(hours=1),
+            title="manual trigger",
+            description=None,
+            payload={},
+            created_by_user_id="admin-user",
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(event)
+        db.commit()
+        event_id = event.id
+
+    actor = ActorContext(
+        user_id="admin-user",
+        username="admin",
+        display_name="Admin",
+        session_id="session-1",
+        active_role=RoleCode.ADMIN.value,
+        roles=[RoleCode.ADMIN.value],
+        token_version=1,
+        role_version=1,
+    )
+
+    with db_session_factory() as db:
+        detail = early_trigger_event(db, actor, event_id)
+
+    triggered_event = detail["event"]
+    assert triggered_event.status == EventStatus.TRIGGERED.value
+    assert triggered_event.triggered_at is not None
+
+    with db_session_factory() as db:
+        event = db.scalar(select(Event).where(Event.id == event_id))
+        assert event is not None
+        assert event.status == EventStatus.TRIGGERED.value
+        assert event.triggered_at is not None
 
 
 def test_reopen_recreates_pending_timeout_events(client, db_session_factory):

@@ -2,8 +2,10 @@ import { Bell, CheckCheck, ExternalLink, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { acceptTicketEscalation, rejectTicketEscalation } from "../api/tickets";
 import { useLanguage } from "../contexts/LanguageContext";
 import { useRealtime } from "../contexts/RealtimeContext";
+import { resolveNotificationTicketPath } from "../features/notifications/utils";
 import type { NotificationSummary } from "../types/notification";
 import { formatApiDateTime } from "../utils/datetime";
 
@@ -23,6 +25,7 @@ export default function NotificationsPage() {
   const { notifications, unreadCount, refreshNotifications, markAsRead, realtimeStatus } = useRealtime();
   const [loading, setLoading] = useState(true);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
+  const [submittingActionId, setSubmittingActionId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,6 +53,26 @@ export default function NotificationsPage() {
       await markAsRead(notificationId);
     } finally {
       setSubmittingId(null);
+    }
+  };
+
+  const handleAction = async (notification: NotificationSummary, decision: "accept" | "reject") => {
+    const escalationId = typeof notification.action_payload.escalation_id === "string"
+      ? notification.action_payload.escalation_id
+      : null;
+    if (!escalationId) {
+      return;
+    }
+    setSubmittingActionId(notification.id);
+    try {
+      if (decision === "accept") {
+        await acceptTicketEscalation(escalationId);
+      } else {
+        await rejectTicketEscalation(escalationId, {});
+      }
+      await refreshNotifications();
+    } finally {
+      setSubmittingActionId(null);
     }
   };
 
@@ -122,10 +145,11 @@ export default function NotificationsPage() {
           ) : (
             <div className="space-y-4">
               {notifications.map((notification) => {
-                const relatedTicketPath =
-                  notification.related_resource_type === "ticket" && notification.related_resource_id
-                    ? `/tickets/${notification.related_resource_id}`
-                    : null;
+                const relatedTicketPath = resolveNotificationTicketPath(notification);
+                const isActionRequired =
+                  notification.action_required &&
+                  notification.action_type === "ticket_escalation" &&
+                  notification.action_status === "pending";
 
                 return (
                   <article
@@ -139,6 +163,11 @@ export default function NotificationsPage() {
                           <span className={`inline-flex rounded-full border px-2 py-1 text-xs font-medium ${statusTone(notification.status)}`}>
                             {notification.status}
                           </span>
+                          {isActionRequired && (
+                            <span className="inline-flex rounded-full border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                              {language === "zh" ? "待处理" : "Action Required"}
+                            </span>
+                          )}
                         </div>
                         <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">{notification.content}</p>
                       </div>
@@ -160,6 +189,32 @@ export default function NotificationsPage() {
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2">
+                        {isActionRequired && (
+                          <>
+                            <button
+                              onClick={() => void handleAction(notification, "reject")}
+                              disabled={submittingActionId === notification.id}
+                              className="inline-flex items-center gap-2 rounded-xl border border-red-200 px-3 py-2 text-sm text-red-700 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/30"
+                            >
+                              {submittingActionId === notification.id
+                                ? t("common.loading")
+                                : language === "zh"
+                                  ? "拒绝"
+                                  : "Reject"}
+                            </button>
+                            <button
+                              onClick={() => void handleAction(notification, "accept")}
+                              disabled={submittingActionId === notification.id}
+                              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {submittingActionId === notification.id
+                                ? t("common.loading")
+                                : language === "zh"
+                                  ? "接受"
+                                  : "Accept"}
+                            </button>
+                          </>
+                        )}
                         {relatedTicketPath && (
                           <Link
                             to={relatedTicketPath}

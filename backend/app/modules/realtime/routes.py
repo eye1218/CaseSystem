@@ -66,6 +66,10 @@ def notification_create(
             content=payload.content,
             related_resource_type=payload.related_resource_type,
             related_resource_id=payload.related_resource_id,
+            action_required=payload.action_required,
+            action_type=payload.action_type,
+            action_status=payload.action_status,
+            action_payload=payload.action_payload,
             expire_at=payload.expire_at,
         )
     except NotificationOperationError as exc:

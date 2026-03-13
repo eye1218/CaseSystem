@@ -140,6 +140,7 @@ def test_ticket_live_response_returns_only_volatile_sections(client, db_session_
     assert set(payload) == {
         "ticket",
         "available_actions",
+        "pending_escalation",
         "activity_feed",
         "raw_alerts",
         "responsibility_summary",

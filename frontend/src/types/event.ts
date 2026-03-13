@@ -10,6 +10,7 @@ export type EventTriggerPoint =
   | "ticket.closed"
   | "ticket.reopened"
   | "ticket.escalated"
+  | "ticket.escalation.requested"
   | "ticket.escalation.rejected"
   | "ticket.escalation.accepted";
 export type EventFilterField = "priority" | "category" | "risk_score" | "created_at";

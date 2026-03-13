@@ -119,3 +119,44 @@ class TicketAction(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class TicketEscalation(Base):
+    __tablename__ = "ticket_escalations"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    ticket_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("tickets.id", ondelete="CASCADE"), nullable=False
+    )
+    source_level: Mapped[str] = mapped_column(String(16), nullable=False)
+    target_level: Mapped[str] = mapped_column(String(16), nullable=False)
+    target_user_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    target_pool_code: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    requested_by: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=False
+    )
+    requested_by_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    source_pool_code: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    source_assigned_to: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    source_assigned_to_user_id: Mapped[Optional[str]] = mapped_column(
+        String(36), nullable=True
+    )
+    source_sub_status: Mapped[str] = mapped_column(String(64), nullable=False, default="NONE")
+    confirmed_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    confirmed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    rejected_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    rejected_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reject_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

@@ -108,6 +108,10 @@ def build_notification_message(notification: UserNotification) -> dict[str, obje
             "requires_ack": True,
             "requires_read": True,
             "status": notification.status,
+            "action_required": notification.action_required,
+            "action_type": notification.action_type,
+            "action_status": notification.action_status,
+            "action_payload": notification.action_payload,
         },
     }
 
@@ -128,6 +132,8 @@ def build_notification_update_message(
             else None,
             "read_at": notification.read_at.isoformat() if notification.read_at else None,
             "unread_count": unread_count,
+            "action_status": notification.action_status,
+            "action_payload": notification.action_payload,
         },
     }
 
@@ -166,9 +172,8 @@ def list_notifications(
     return items, len(items), unread_count
 
 
-def create_notification(
+def _persist_notification(
     db: Session,
-    actor: ActorContext,
     *,
     user_id: str,
     category: str,
@@ -176,10 +181,12 @@ def create_notification(
     content: str,
     related_resource_type: str | None,
     related_resource_id: str | int | None,
+    action_required: bool = False,
+    action_type: str | None = None,
+    action_status: str | None = None,
+    action_payload: dict[str, object] | None = None,
     expire_at: datetime | None,
 ) -> tuple[UserNotification, int]:
-    _require_admin_actor(actor)
-
     notification = UserNotification(
         user_id=user_id,
         category=category,
@@ -190,6 +197,10 @@ def create_notification(
         if related_resource_id is not None
         else None,
         status=NotificationStatus.PENDING.value,
+        action_required=action_required,
+        action_type=action_type,
+        action_status=action_status if action_required else None,
+        action_payload=action_payload or {},
         created_at=utcnow(),
         expire_at=expire_at,
     )
@@ -210,6 +221,70 @@ def create_notification(
         )
 
     return notification, unread_count
+
+
+def create_notification(
+    db: Session,
+    actor: ActorContext,
+    *,
+    user_id: str,
+    category: str,
+    title: str,
+    content: str,
+    related_resource_type: str | None,
+    related_resource_id: str | int | None,
+    action_required: bool = False,
+    action_type: str | None = None,
+    action_status: str | None = None,
+    action_payload: dict[str, object] | None = None,
+    expire_at: datetime | None,
+) -> tuple[UserNotification, int]:
+    _require_admin_actor(actor)
+    return _persist_notification(
+        db,
+        user_id=user_id,
+        category=category,
+        title=title,
+        content=content,
+        related_resource_type=related_resource_type,
+        related_resource_id=related_resource_id,
+        action_required=action_required,
+        action_type=action_type,
+        action_status=action_status,
+        action_payload=action_payload,
+        expire_at=expire_at,
+    )
+
+
+def deliver_notification(
+    db: Session,
+    *,
+    user_id: str,
+    category: str,
+    title: str,
+    content: str,
+    related_resource_type: str | None,
+    related_resource_id: str | int | None,
+    action_required: bool = False,
+    action_type: str | None = None,
+    action_status: str | None = None,
+    action_payload: dict[str, object] | None = None,
+    expire_at: datetime | None = None,
+) -> tuple[UserNotification, int]:
+    return _persist_notification(
+        db,
+        user_id=user_id,
+        category=category,
+        title=title,
+        content=content,
+        related_resource_type=related_resource_type,
+        related_resource_id=related_resource_id,
+        action_required=action_required,
+        action_type=action_type,
+        action_status=action_status,
+        action_payload=action_payload,
+        expire_at=expire_at,
+    )
 
 
 def acknowledge_notification(
@@ -282,3 +357,44 @@ def mark_notification_read(
         )
 
     return notification, unread_count
+
+
+def resolve_notification_action(
+    db: Session,
+    *,
+    user_id: str,
+    related_resource_type: str,
+    related_resource_id: str | int,
+) -> UserNotification | None:
+    notification = db.scalar(
+        select(UserNotification).where(
+            UserNotification.user_id == user_id,
+            UserNotification.related_resource_type == related_resource_type,
+            UserNotification.related_resource_id == str(related_resource_id),
+            UserNotification.action_required.is_(True),
+        )
+    )
+    if notification is None:
+        return None
+
+    now = utcnow()
+    notification.action_status = "completed"
+    if notification.delivered_at is None:
+        notification.delivered_at = now
+    notification.status = NotificationStatus.READ.value
+    notification.read_at = now
+    db.commit()
+    db.refresh(notification)
+
+    unread_count = count_unread_notifications(db, user_id=user_id)
+    try:
+        from .socket_server import emit_notification_updated_sync, update_unread_count_cache
+
+        update_unread_count_cache(user_id=user_id, unread_count=unread_count)
+        emit_notification_updated_sync(notification, unread_count=unread_count)
+    except Exception:
+        logger.exception(
+            "Failed to emit notification.updated message after action resolution",
+            extra={"notification_id": notification.id, "user_id": user_id},
+        )
+    return notification

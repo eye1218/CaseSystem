@@ -21,6 +21,10 @@ class NotificationSummaryResponse(BaseModel):
     related_resource_type: str | None
     related_resource_id: str | None
     status: str
+    action_required: bool = False
+    action_type: str | None = None
+    action_status: str | None = None
+    action_payload: dict[str, object] = Field(default_factory=dict)
     created_at: datetime
     delivered_at: datetime | None
     read_at: datetime | None
@@ -45,5 +49,8 @@ class NotificationCreateRequest(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
     related_resource_type: str | None = Field(default=None, max_length=64)
     related_resource_id: str | int | None = None
+    action_required: bool = False
+    action_type: str | None = Field(default=None, max_length=64)
+    action_status: str | None = Field(default=None, max_length=16)
+    action_payload: dict[str, object] = Field(default_factory=dict)
     expire_at: datetime | None = None
-

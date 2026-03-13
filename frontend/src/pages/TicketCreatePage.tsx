@@ -8,15 +8,12 @@ import { useAuth } from "../contexts/AuthContext";
 import { useLanguage } from "../contexts/LanguageContext";
 import type { TicketPriority } from "../types/ticket";
 
-type AssignmentMode = "unassigned" | "self" | "pool";
-
 interface FormState {
   title: string;
   description: string;
   category_id: string;
   priority: TicketPriority;
   risk_score: string;
-  assignment_mode: AssignmentMode;
   pool_code: string;
 }
 
@@ -40,8 +37,7 @@ export default function TicketCreatePage() {
     category_id: "intrusion",
     priority: "P2",
     risk_score: "60",
-    assignment_mode: "unassigned",
-    pool_code: "T2_POOL"
+    pool_code: "T1_POOL"
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -61,8 +57,7 @@ export default function TicketCreatePage() {
         category_id: form.category_id,
         priority: form.priority,
         risk_score: Number(form.risk_score),
-        assignment_mode: isCustomer ? "unassigned" : form.assignment_mode,
-        pool_code: !isCustomer && form.assignment_mode === "pool" ? form.pool_code : undefined
+        pool_code: isCustomer ? undefined : form.pool_code
       });
       navigate(`/tickets/${payload.ticket.id}`);
     } catch (submitError) {
@@ -194,21 +189,7 @@ export default function TicketCreatePage() {
             </Field>
 
             {!isCustomer && (
-              <Field label={language === "zh" ? "初始分配" : "Initial Assignment"}>
-                <select
-                  value={form.assignment_mode}
-                  onChange={(event) => setForm((current) => ({ ...current, assignment_mode: event.target.value as AssignmentMode }))}
-                  className="ticket-input"
-                >
-                  <option value="unassigned">{language === "zh" ? "暂不分配" : "Leave Unassigned"}</option>
-                  <option value="self">{language === "zh" ? "分配给自己" : "Assign to Me"}</option>
-                  <option value="pool">{language === "zh" ? "投入池子" : "Move to Pool"}</option>
-                </select>
-              </Field>
-            )}
-
-            {!isCustomer && form.assignment_mode === "pool" && (
-              <Field label={language === "zh" ? "目标池子" : "Target Pool"} className="md:col-span-2">
+              <Field label={language === "zh" ? "初始池子" : "Initial Pool"} className="md:col-span-2">
                 <select
                   value={form.pool_code}
                   onChange={(event) => setForm((current) => ({ ...current, pool_code: event.target.value }))}
@@ -267,8 +248,8 @@ export default function TicketCreatePage() {
                   ? "客户提交后默认进入待响应，责任层级默认为 T1，由内部团队后续接手。"
                   : "Customer tickets enter waiting-response state and default to T1 ownership for internal follow-up."
                 : language === "zh"
-                  ? "内部用户可以选择先不分配、直接分配给自己，或将工单投入池子等待领取。"
-                  : "Internal users can leave it unassigned, assign to themselves, or push it into a pool."
+                  ? "内部用户创建时只决定初始进入哪个池子，工单创建后不直接归属个人。"
+                  : "Internal creation only selects the initial pool. New tickets do not go directly to an individual owner."
             }
           />
           <SummaryCard

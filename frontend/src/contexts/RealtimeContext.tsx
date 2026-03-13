@@ -36,6 +36,10 @@ function mapNotificationEvent(event: NotificationCreatedEvent): NotificationSumm
     related_resource_type: event.payload.related_resource.resource_type,
     related_resource_id: event.payload.related_resource.resource_id,
     status: event.payload.status,
+    action_required: event.payload.action_required,
+    action_type: event.payload.action_type,
+    action_status: event.payload.action_status,
+    action_payload: event.payload.action_payload,
     created_at: event.payload.created_at,
     delivered_at: null,
     read_at: null,
@@ -153,6 +157,8 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
                 ? {
                     ...item,
                     status: event.payload.status,
+                    action_status: event.payload.action_status,
+                    action_payload: event.payload.action_payload,
                     delivered_at: event.payload.delivered_at,
                     read_at: event.payload.read_at
                   }

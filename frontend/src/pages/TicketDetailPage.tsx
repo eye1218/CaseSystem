@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  ArrowUpRight,
   ArrowLeft,
   CheckCircle2,
   ChevronRight,
@@ -12,6 +13,7 @@ import {
   RefreshCw,
   Send,
   ShieldAlert,
+  UserPlus,
   UserCheck
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -22,7 +24,18 @@ import { Link, useParams } from "react-router-dom";
 
 import { ApiError } from "../api/client";
 import { getKnowledgeArticle } from "../api/knowledge";
-import { addTicketComment, getTicketDetail, getTicketLive, runTicketAction, updateTicket } from "../api/tickets";
+import {
+  addTicketComment,
+  assignTicket,
+  escalateTicketToPool,
+  escalateTicketToUser,
+  getTicketDetail,
+  getTicketLive,
+  listInternalTicketUsers,
+  runTicketAction,
+  updateTicket
+} from "../api/tickets";
+import TicketOwnershipActionPanel from "../components/TicketOwnershipActionPanel";
 import KnowledgeDrawer from "../components/KnowledgeDrawer";
 import RelatedKnowledgePanel from "../components/RelatedKnowledgePanel";
 import TicketReportSections from "../components/TicketReportSections";
@@ -31,10 +44,17 @@ import { useAuth } from "../contexts/AuthContext";
 import { useLanguage } from "../contexts/LanguageContext";
 import { useRealtime } from "../contexts/RealtimeContext";
 import type { KnowledgeArticleDetail, KnowledgeArticleSummary } from "../types/knowledge";
-import type { TicketActivityItem, TicketDetail, TicketLive, TicketPriority } from "../types/ticket";
+import type {
+  InternalTicketUser,
+  TicketActivityItem,
+  TicketDetail,
+  TicketLive,
+  TicketPriority,
+} from "../types/ticket";
 import { formatApiDateTime, parseApiDate } from "../utils/datetime";
 
 type MainTab = "activity" | "alerts" | "context";
+type OwnershipActionMode = "assign" | "escalate_user" | "escalate_pool";
 
 interface EditFormState {
   title: string;
@@ -50,7 +70,18 @@ const categoryOptions = ticketCategoryOptions.map((item) => ({
   en: item.en
 }));
 
-const actionOrder = ["respond", "resolve", "close", "reopen", "claim", "move_to_pool", "edit"];
+const actionOrder = [
+  "assign",
+  "claim",
+  "escalate_user",
+  "escalate_pool",
+  "move_to_pool",
+  "respond",
+  "resolve",
+  "close",
+  "reopen",
+  "edit"
+];
 
 function priorityClass(priority: string) {
   switch (priority) {
@@ -90,6 +121,13 @@ function riskClass(score: number) {
   return "text-emerald-600 dark:text-emerald-400";
 }
 
+function nextPoolCode(currentPoolCode: string | null, responsibilityLevel: string) {
+  const level = currentPoolCode ? currentPoolCode.replace("_POOL", "") : responsibilityLevel;
+  if (level === "T1") return "T2_POOL";
+  if (level === "T2") return "T3_POOL";
+  return null;
+}
+
 function formatDuration(ms: number) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const days = Math.floor(totalSeconds / 86400);
@@ -108,7 +146,10 @@ function actionLabel(action: string, language: "zh" | "en") {
     resolve: { zh: "处置完成", en: "Resolve" },
     close: { zh: "关闭", en: "Close" },
     reopen: { zh: "重开", en: "Reopen" },
+    assign: { zh: "直接分配", en: "Assign" },
     claim: { zh: "领取工单", en: "Claim" },
+    escalate_user: { zh: "升级给用户", en: "Escalate User" },
+    escalate_pool: { zh: "升级到池子", en: "Escalate Pool" },
     move_to_pool: { zh: "加入池子", en: "Move to Pool" },
     edit: { zh: "编辑", en: "Edit" }
   };
@@ -127,6 +168,11 @@ function actionIcon(action: string) {
       return <RefreshCw className="h-4 w-4" />;
     case "claim":
       return <UserCheck className="h-4 w-4" />;
+    case "assign":
+      return <UserPlus className="h-4 w-4" />;
+    case "escalate_user":
+    case "escalate_pool":
+      return <ArrowUpRight className="h-4 w-4" />;
     case "move_to_pool":
       return <Inbox className="h-4 w-4" />;
     default:
@@ -303,6 +349,11 @@ export default function TicketDetailPage() {
   const [commentVisibility, setCommentVisibility] = useState<"PUBLIC" | "INTERNAL">("INTERNAL");
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const [ownershipAction, setOwnershipAction] = useState<OwnershipActionMode | null>(null);
+  const [ownershipTargets, setOwnershipTargets] = useState<InternalTicketUser[]>([]);
+  const [ownershipTargetId, setOwnershipTargetId] = useState("");
+  const [ownershipNote, setOwnershipNote] = useState("");
+  const [ownershipError, setOwnershipError] = useState("");
   const [knowledgeDrawerOpen, setKnowledgeDrawerOpen] = useState(false);
   const [knowledgeDrawerLoading, setKnowledgeDrawerLoading] = useState(false);
   const [knowledgeDrawerError, setKnowledgeDrawerError] = useState("");
@@ -350,6 +401,10 @@ export default function TicketDetailPage() {
     setKnowledgeDrawerLoading(false);
     setKnowledgeDrawerError("");
     setKnowledgeDrawerArticle(null);
+    setOwnershipAction(null);
+    setOwnershipTargetId("");
+    setOwnershipNote("");
+    setOwnershipError("");
   }, [id]);
 
   useEffect(() => {
@@ -402,10 +457,33 @@ export default function TicketDetailPage() {
 
   const ticket = detail?.ticket;
 
+  const openOwnershipAction = async (mode: OwnershipActionMode) => {
+    setOwnershipAction(mode);
+    setOwnershipError("");
+    setOwnershipNote("");
+
+    if (mode === "assign" || mode === "escalate_user") {
+      try {
+        const payload = await listInternalTicketUsers();
+        setOwnershipTargets(payload.items);
+        setOwnershipTargetId((current) => current || payload.items[0]?.id || "");
+      } catch (loadError) {
+        setOwnershipError(loadError instanceof Error ? loadError.message : "Failed to load internal users");
+      }
+      return;
+    }
+
+    setOwnershipTargetId("");
+  };
+
   const handleAction = async (action: string) => {
     if (!id || !detail) return;
     if (action === "edit") {
       setEditing((current) => !current);
+      return;
+    }
+    if (action === "assign" || action === "escalate_user" || action === "escalate_pool") {
+      await openOwnershipAction(action);
       return;
     }
 
@@ -418,6 +496,45 @@ export default function TicketDetailPage() {
       setDetail(payload);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Action failed");
+    } finally {
+      setSubmitting(null);
+    }
+  };
+
+  const handleOwnershipSubmit = async () => {
+    if (!id || !detail || !ownershipAction) return;
+
+    setSubmitting(ownershipAction);
+    setOwnershipError("");
+    setError("");
+    try {
+      let payload: TicketDetail;
+      if (ownershipAction === "assign") {
+        payload = await assignTicket(id, {
+          version: detail.ticket.version,
+          target_user_id: ownershipTargetId,
+          note: ownershipNote.trim() || undefined
+        });
+      } else if (ownershipAction === "escalate_user") {
+        payload = await escalateTicketToUser(id, {
+          version: detail.ticket.version,
+          target_user_id: ownershipTargetId,
+          note: ownershipNote.trim() || undefined
+        });
+      } else {
+        payload = await escalateTicketToPool(id, {
+          version: detail.ticket.version,
+          note: ownershipNote.trim() || undefined
+        });
+      }
+      setDetail(payload);
+      setOwnershipAction(null);
+      setOwnershipNote("");
+      setOwnershipError("");
+    } catch (submitError) {
+      const message = submitError instanceof Error ? submitError.message : "Action failed";
+      setOwnershipError(message);
+      setError(message);
     } finally {
       setSubmitting(null);
     }
@@ -560,6 +677,29 @@ export default function TicketDetailPage() {
                   ))}
                 </div>
               </div>
+
+              {ownershipAction && (
+                <TicketOwnershipActionPanel
+                  mode={ownershipAction}
+                  language={language}
+                  targetUsers={ownershipTargets}
+                  targetUserId={ownershipTargetId}
+                  note={ownershipNote}
+                  submitting={submitting === ownershipAction}
+                  errorMessage={ownershipError}
+                  targetPoolCode={nextPoolCode(ticket.current_pool_code, ticket.responsibility_level)}
+                  onTargetUserChange={setOwnershipTargetId}
+                  onNoteChange={setOwnershipNote}
+                  onCancel={() => {
+                    setOwnershipAction(null);
+                    setOwnershipError("");
+                    setOwnershipNote("");
+                  }}
+                  onSubmit={() => {
+                    void handleOwnershipSubmit();
+                  }}
+                />
+              )}
 
               {editing && (
                 <form onSubmit={handleEditSubmit} className="mb-5 grid gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50 md:grid-cols-2">
@@ -856,6 +996,23 @@ export default function TicketDetailPage() {
             <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300">
               {summaryText}
             </div>
+            {detail.pending_escalation ? (
+              <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/80 p-4 dark:border-amber-900/50 dark:bg-amber-950/20">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-700 dark:text-amber-300">
+                  {language === "zh" ? "待处理升级请求" : "Pending Escalation"}
+                </div>
+                <div className="text-sm leading-6 text-slate-700 dark:text-slate-200">
+                  {detail.pending_escalation.target_user_id
+                    ? language === "zh"
+                      ? `已向指定用户发起升级，等待处理。发起人：${detail.pending_escalation.requested_by}`
+                      : `Directed escalation is waiting for response. Requested by ${detail.pending_escalation.requested_by}.`
+                    : detail.pending_escalation.target_pool_code}
+                </div>
+                <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                  {formatApiDateTime(detail.pending_escalation.requested_at, language)}
+                </div>
+              </div>
+            ) : null}
           </div>
 
           {user?.active_role !== "CUSTOMER" ? (

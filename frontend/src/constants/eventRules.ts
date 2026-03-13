@@ -37,6 +37,7 @@ export const eventTriggerPointOptions: Array<{ value: EventTriggerPoint; zh: str
   { value: "ticket.closed", zh: "工单关闭", en: "Ticket Closed" },
   { value: "ticket.reopened", zh: "工单重开", en: "Ticket Reopened" },
   { value: "ticket.escalated", zh: "工单升级", en: "Ticket Escalated" },
+  { value: "ticket.escalation.requested", zh: "升级给指定人员已发起", en: "Escalation Requested" },
   { value: "ticket.escalation.rejected", zh: "升级给指定人员被拒", en: "Escalation Rejected" },
   { value: "ticket.escalation.accepted", zh: "升级被接收", en: "Escalation Accepted" },
 ];

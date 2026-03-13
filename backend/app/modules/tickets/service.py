@@ -4,13 +4,21 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional, cast as type_cast
 
-from sqlalchemy import String, cast, func, select
+from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.sql.elements import ColumnElement
 
 from ...auth import ActorContext
-from ...enums import RoleCode, TicketMainStatus, TicketPriority, TicketSubStatus
+from ...enums import (
+    RoleCode,
+    TicketEscalationMode,
+    TicketEscalationStatus,
+    TicketMainStatus,
+    TicketPriority,
+    TicketSubStatus,
+)
+from ...models import User, UserRole
 from ...reporting import list_reports_for_ticket_detail, list_templates_for_ticket_detail
 from ...security import utcnow
 from ..events.service import (
@@ -19,9 +27,13 @@ from ..events.service import (
     create_ticket_timeout_events,
 )
 from ..knowledge.service import list_related_articles_for_ticket_detail
-from ..realtime.service import publish_ticket_changed
+from ..realtime.service import (
+    deliver_notification,
+    publish_ticket_changed,
+    resolve_notification_action,
+)
 from .cache import get_ticket_cache, get_ticket_cache_ttl_seconds
-from .models import Ticket, TicketAction, TicketComment
+from .models import Ticket, TicketAction, TicketComment, TicketEscalation
 from .schemas import TicketSummaryResponse
 from .seed_data import CATEGORY_NAMES, POOL_CODES
 from .support_data import (
@@ -39,8 +51,23 @@ TICKET_EVENT_STATUS_CHANGED = "ticket.status.changed"
 TICKET_EVENT_CLOSED = "ticket.closed"
 TICKET_EVENT_REOPENED = "ticket.reopened"
 TICKET_EVENT_ESCALATED = "ticket.escalated"
+TICKET_EVENT_ESCALATION_REQUESTED = "ticket.escalation.requested"
+TICKET_EVENT_ESCALATION_ACCEPTED = "ticket.escalation.accepted"
+TICKET_EVENT_ESCALATION_REJECTED = "ticket.escalation.rejected"
 TICKET_EVENT_RESPONSE_TIMEOUT = "ticket.response.timeout"
 TICKET_EVENT_RESOLUTION_TIMEOUT = "ticket.resolution.timeout"
+
+POOL_TIER_ORDER = {
+    "T1_POOL": 1,
+    "T2_POOL": 2,
+    "T3_POOL": 3,
+}
+ROLE_TIER_ORDER = {
+    RoleCode.T1.value: 1,
+    RoleCode.T2.value: 2,
+    RoleCode.T3.value: 3,
+    RoleCode.ADMIN.value: 4,
+}
 
 
 class TicketOperationError(Exception):
@@ -150,6 +177,7 @@ def _serialize_ticket(ticket: Ticket) -> dict[str, object]:
         "sub_status": ticket.sub_status,
         "created_by": ticket.created_by,
         "assigned_to": ticket.assigned_to,
+        "assigned_to_user_id": ticket.assigned_to_user_id,
         "current_pool_code": ticket.current_pool_code,
         "responsibility_level": ticket.responsibility_level,
         "response_deadline_at": ticket.response_deadline_at.isoformat()
@@ -206,26 +234,163 @@ def _sla_windows(priority: str) -> tuple[timedelta, timedelta]:
 def _resolve_assignment(
     actor: ActorContext, assignment_mode: str, pool_code: str | None
 ) -> tuple[str | None, str | None, str]:
-    responsibility_level = _default_responsibility_level(actor)
+    if pool_code and pool_code not in POOL_CODES:
+        raise TicketOperationError(
+            422, "A valid pool code is required when assignment_mode is `pool`"
+        )
 
+    resolved_pool = pool_code or "T1_POOL"
+    return None, resolved_pool, resolved_pool.removesuffix("_POOL")
+
+
+def _pool_code_to_level(pool_code: str | None) -> str | None:
+    if not pool_code:
+        return None
+    return pool_code.removesuffix("_POOL")
+
+
+def _level_to_pool_code(level: str | None) -> str | None:
+    if level in {RoleCode.T1.value, RoleCode.T2.value, RoleCode.T3.value}:
+        return f"{level}_POOL"
+    return None
+
+
+def _tier_rank_for_role(role_code: str) -> int:
+    return ROLE_TIER_ORDER.get(role_code, 0)
+
+
+def _tier_rank_for_pool(pool_code: str | None) -> int:
+    if pool_code is None:
+        return 0
+    return POOL_TIER_ORDER.get(pool_code, 0)
+
+
+def _next_pool_code(pool_code: str | None, responsibility_level: str) -> str | None:
+    current_level = _pool_code_to_level(pool_code) or responsibility_level
+    if current_level == RoleCode.T1.value:
+        return "T2_POOL"
+    if current_level == RoleCode.T2.value:
+        return "T3_POOL"
+    return None
+
+
+def _is_internal_role(role_code: str) -> bool:
+    return role_code in {
+        RoleCode.T1.value,
+        RoleCode.T2.value,
+        RoleCode.T3.value,
+        RoleCode.ADMIN.value,
+    }
+
+
+def _highest_internal_role(role_codes: list[str]) -> str | None:
+    internal_roles = [code for code in role_codes if code in {RoleCode.T1.value, RoleCode.T2.value, RoleCode.T3.value}]
+    if not internal_roles:
+        if RoleCode.ADMIN.value in role_codes:
+            return RoleCode.T2.value
+        return None
+    return max(internal_roles, key=_tier_rank_for_role)
+
+
+def _actor_can_claim_pool(actor: ActorContext, pool_code: str | None) -> bool:
+    if pool_code is None:
+        return False
     if actor.active_role == RoleCode.CUSTOMER.value:
-        return None, None, responsibility_level
+        return False
+    if actor.active_role == RoleCode.ADMIN.value:
+        return True
+    return _tier_rank_for_role(actor.active_role) >= _tier_rank_for_pool(pool_code)
 
-    if assignment_mode == "self":
-        return actor.display_name, None, responsibility_level
 
-    if assignment_mode == "pool":
-        if pool_code not in POOL_CODES:
-            raise TicketOperationError(
-                422, "A valid pool code is required when assignment_mode is `pool`"
+def _assert_valid_ownership_state(ticket: Ticket) -> None:
+    has_pool = bool(ticket.current_pool_code)
+    has_owner = bool(ticket.assigned_to_user_id)
+    if has_pool == has_owner:
+        raise TicketOperationError(409, "Ticket ownership state is invalid")
+
+
+def _get_active_internal_user(db: Session, user_id: str) -> tuple[User, list[str], str]:
+    user = db.get(User, user_id)
+    if user is None or user.status != "active":
+        raise TicketOperationError(422, "Target user is invalid")
+
+    role_codes = list(
+        db.scalars(
+            select(UserRole.role_code).where(
+                UserRole.user_id == user_id,
+                UserRole.is_active.is_(True),
             )
-        assert pool_code is not None
-        return None, pool_code, pool_code.removesuffix("_POOL")
+        ).all()
+    )
+    highest_role = _highest_internal_role(role_codes)
+    if highest_role is None:
+        raise TicketOperationError(422, "Target user is invalid")
+    return user, role_codes, highest_role
 
-    if assignment_mode == "unassigned":
-        return None, None, responsibility_level
 
-    raise TicketOperationError(422, "Unsupported assignment mode")
+def _list_active_internal_users(db: Session) -> list[dict[str, object]]:
+    users = list(
+        db.scalars(select(User).where(User.status == "active").order_by(User.display_name.asc())).all()
+    )
+    items: list[dict[str, object]] = []
+    for user in users:
+        role_codes = list(
+            db.scalars(
+                select(UserRole.role_code).where(
+                    UserRole.user_id == user.id,
+                    UserRole.is_active.is_(True),
+                )
+            ).all()
+        )
+        highest_role = _highest_internal_role(role_codes)
+        if highest_role is None:
+            continue
+        items.append(
+            {
+                "id": user.id,
+                "username": user.username,
+                "display_name": user.display_name,
+                "highest_role_code": highest_role,
+                "role_codes": role_codes,
+            }
+        )
+    return items
+
+
+def _get_pending_escalation(db: Session, ticket_id: int) -> TicketEscalation | None:
+    return db.scalar(
+        select(TicketEscalation).where(
+            TicketEscalation.ticket_id == ticket_id,
+            TicketEscalation.status == TicketEscalationStatus.PENDING_CONFIRM.value,
+        )
+    )
+
+
+def _assert_no_pending_escalation(db: Session, ticket_id: int) -> None:
+    if _get_pending_escalation(db, ticket_id) is not None:
+        raise TicketOperationError(
+            409, "Ticket has a pending escalation request awaiting response"
+        )
+
+
+def _serialize_escalation(escalation: TicketEscalation | None) -> dict[str, object] | None:
+    if escalation is None:
+        return None
+    return {
+        "id": escalation.id,
+        "ticket_id": escalation.ticket_id,
+        "mode": escalation.mode,
+        "status": escalation.status,
+        "source_level": escalation.source_level,
+        "target_level": escalation.target_level,
+        "target_user_id": escalation.target_user_id,
+        "target_pool_code": escalation.target_pool_code,
+        "requested_by": escalation.requested_by_name,
+        "requested_at": escalation.requested_at.isoformat(),
+        "reject_reason": escalation.reject_reason,
+        "source_pool_code": escalation.source_pool_code,
+        "source_assigned_to": escalation.source_assigned_to,
+    }
 
 
 def _visibility_condition(actor: ActorContext, visibility: str) -> bool:
@@ -234,7 +399,12 @@ def _visibility_condition(actor: ActorContext, visibility: str) -> bool:
     return visibility != "INTERNAL"
 
 
-def _available_actions(ticket: Ticket, actor: ActorContext) -> list[str]:
+def _available_actions(
+    ticket: Ticket | TicketSummaryResponse,
+    actor: ActorContext,
+    *,
+    has_pending_escalation: bool = False,
+) -> list[str]:
     actions: list[str] = ["comment"]
 
     if actor.active_role == RoleCode.CUSTOMER.value:
@@ -243,10 +413,20 @@ def _available_actions(ticket: Ticket, actor: ActorContext) -> list[str]:
         return actions
 
     actions.append("edit")
-    if ticket.current_pool_code:
-        actions.append("claim")
-    else:
-        actions.append("move_to_pool")
+    if not has_pending_escalation:
+        if ticket.current_pool_code and _actor_can_claim_pool(actor, ticket.current_pool_code):
+            actions.append("claim")
+            if _next_pool_code(ticket.current_pool_code, ticket.responsibility_level):
+                actions.append("escalate_pool")
+            actions.append("escalate_user")
+        elif ticket.assigned_to_user_id == actor.user_id:
+            actions.append("move_to_pool")
+            if _next_pool_code(ticket.current_pool_code, ticket.responsibility_level):
+                actions.append("escalate_pool")
+            actions.append("escalate_user")
+
+        if actor.active_role == RoleCode.ADMIN.value:
+            actions.append("assign")
 
     if ticket.main_status in {
         TicketMainStatus.WAITING_RESPONSE.value,
@@ -396,12 +576,14 @@ def _filter_activity_feed(
 
 
 def _detail_base_entry(db: Session, ticket: Ticket) -> dict[str, object]:
+    pending_escalation = _get_pending_escalation(db, ticket.id)
     return {
         "ticket": _serialize_ticket(ticket),
         "_access": {
             "customer_user_id": ticket.customer_user_id,
             "is_deleted": ticket.is_deleted,
         },
+        "pending_escalation": _serialize_escalation(pending_escalation),
         "activity_feed": _activity_feed_raw(db, ticket.id),
         "raw_alerts": _raw_alerts(ticket),
         "siem_context_markdown": _context_markdown(ticket),
@@ -416,9 +598,13 @@ def _detail_response_from_base(
     ticket_payload = type_cast(dict[str, object], base["ticket"])
     ticket_model = TicketSummaryResponse.model_validate(ticket_payload)
     raw_items = type_cast(list[dict[str, object]], base["activity_feed"])
+    has_pending_escalation = base["pending_escalation"] is not None
     return {
         "ticket": ticket_payload,
-        "available_actions": _available_actions(ticket_model, actor),
+        "available_actions": _available_actions(
+            ticket_model, actor, has_pending_escalation=has_pending_escalation
+        ),
+        "pending_escalation": base["pending_escalation"],
         "activity_feed": _filter_activity_feed(raw_items, actor),
         "related_knowledge": list_related_articles_for_ticket_detail(
             db, actor, category_id=str(ticket_payload["category_id"])
@@ -447,9 +633,13 @@ def _live_response_from_base(
     ticket_payload = type_cast(dict[str, object], base["ticket"])
     ticket_model = TicketSummaryResponse.model_validate(ticket_payload)
     raw_items = type_cast(list[dict[str, object]], base["activity_feed"])
+    has_pending_escalation = base["pending_escalation"] is not None
     return {
         "ticket": ticket_payload,
-        "available_actions": _available_actions(ticket_model, actor),
+        "available_actions": _available_actions(
+            ticket_model, actor, has_pending_escalation=has_pending_escalation
+        ),
+        "pending_escalation": base["pending_escalation"],
         "activity_feed": _filter_activity_feed(raw_items, actor),
         "raw_alerts": base["raw_alerts"],
         "responsibility_summary": base["responsibility_summary"],
@@ -801,8 +991,18 @@ def execute_ticket_action(
     if ticket is None:
         raise TicketOperationError(404, "Ticket not found")
     _assert_ticket_version(ticket, expected_version)
+    if action in {"claim", "move_to_pool"}:
+        _assert_valid_ownership_state(ticket)
+        _assert_no_pending_escalation(db, ticket.id)
 
-    if action not in _available_actions(ticket, actor):
+    if action == "claim" and ticket.current_pool_code is None:
+        raise TicketOperationError(409, "Ticket has already been claimed")
+
+    if action not in _available_actions(
+        ticket,
+        actor,
+        has_pending_escalation=_get_pending_escalation(db, ticket.id) is not None,
+    ):
         raise TicketOperationError(
             403, f"Action `{action}` is not available for the current role or status"
         )
@@ -892,9 +1092,13 @@ def execute_ticket_action(
         )
     elif action == "claim":
         _assert_internal_actor(actor)
+        if not _actor_can_claim_pool(actor, ticket.current_pool_code):
+            raise TicketOperationError(403, "Current role cannot claim this pool")
         ticket.assigned_to = actor.display_name
         ticket.assigned_to_user_id = actor.user_id
         ticket.current_pool_code = None
+        ticket.responsibility_level = _default_responsibility_level(actor)
+        ticket.sub_status = TicketSubStatus.NONE.value
         ticket.updated_at = now
         _record_action(
             db,
@@ -910,6 +1114,7 @@ def execute_ticket_action(
         ticket.assigned_to = None
         ticket.assigned_to_user_id = None
         ticket.current_pool_code = f"{ticket.responsibility_level}_POOL"
+        ticket.sub_status = TicketSubStatus.NONE.value
         ticket.updated_at = now
         _record_action(
             db,
@@ -937,6 +1142,329 @@ def execute_ticket_action(
         else "status_changed",
         occurred_at=now,
     )
+    return build_ticket_detail(db, actor, ticket)
+
+
+def list_internal_ticket_users(db: Session, actor: ActorContext) -> list[dict[str, object]]:
+    _assert_internal_actor(actor)
+    return _list_active_internal_users(db)
+
+
+def assign_ticket(
+    db: Session,
+    actor: ActorContext,
+    ticket_id: int,
+    *,
+    expected_version: int,
+    target_user_id: str,
+    note: str | None = None,
+) -> dict[str, object]:
+    if actor.active_role != RoleCode.ADMIN.value:
+        raise TicketOperationError(403, "Admin role required")
+
+    ticket = get_ticket(db, actor, ticket_id)
+    if ticket is None:
+        raise TicketOperationError(404, "Ticket not found")
+    _assert_ticket_version(ticket, expected_version)
+    _assert_valid_ownership_state(ticket)
+    _assert_no_pending_escalation(db, ticket.id)
+    target_user, _, highest_role = _get_active_internal_user(db, target_user_id)
+
+    now = utcnow()
+    ticket.assigned_to = target_user.display_name
+    ticket.assigned_to_user_id = target_user.id
+    ticket.current_pool_code = None
+    ticket.responsibility_level = highest_role
+    ticket.sub_status = TicketSubStatus.NONE.value
+    ticket.updated_at = now
+    _record_action(
+        db,
+        ticket_id=ticket.id,
+        actor=actor,
+        action_type="assigned",
+        content=note or f"管理员已将工单直接分配给 {target_user.display_name}。",
+        visibility="INTERNAL",
+        context={"target_user_id": target_user.id},
+    )
+    create_ticket_event(db, ticket_id=ticket.id, name=TICKET_EVENT_ASSIGNED)
+    _commit_ticket_changes(db)
+    _invalidate_ticket_cache(ticket.id)
+    db.refresh(ticket)
+    _publish_ticket_change(ticket, actor, change_type="assigned", occurred_at=now)
+
+    if target_user.id != actor.user_id:
+        deliver_notification(
+            db,
+            user_id=target_user.id,
+            category="ticket_assigned",
+            title=f"工单 #{ticket.id} 已分配给你",
+            content=f"{actor.display_name} 已将工单「{ticket.title}」分配给你处理。",
+            related_resource_type="ticket",
+            related_resource_id=ticket.id,
+        )
+
+    return build_ticket_detail(db, actor, ticket)
+
+
+def _assert_can_initiate_escalation(actor: ActorContext, ticket: Ticket) -> None:
+    _assert_internal_actor(actor)
+    _assert_valid_ownership_state(ticket)
+    if ticket.current_pool_code:
+        if not _actor_can_claim_pool(actor, ticket.current_pool_code):
+            raise TicketOperationError(403, "Current role cannot operate on this pool")
+        return
+    if ticket.assigned_to_user_id != actor.user_id:
+        raise TicketOperationError(403, "Only the current assignee can escalate this ticket")
+
+
+def escalate_ticket_to_pool(
+    db: Session,
+    actor: ActorContext,
+    ticket_id: int,
+    *,
+    expected_version: int,
+    note: str | None = None,
+) -> dict[str, object]:
+    ticket = get_ticket(db, actor, ticket_id)
+    if ticket is None:
+        raise TicketOperationError(404, "Ticket not found")
+    _assert_ticket_version(ticket, expected_version)
+    _assert_can_initiate_escalation(actor, ticket)
+    _assert_no_pending_escalation(db, ticket.id)
+
+    target_pool_code = _next_pool_code(ticket.current_pool_code, ticket.responsibility_level)
+    if target_pool_code is None:
+        raise TicketOperationError(422, "Escalation to pool is not supported from the current tier")
+
+    now = utcnow()
+    ticket.assigned_to = None
+    ticket.assigned_to_user_id = None
+    ticket.current_pool_code = target_pool_code
+    ticket.responsibility_level = target_pool_code.removesuffix("_POOL")
+    ticket.sub_status = TicketSubStatus.NONE.value
+    ticket.updated_at = now
+    _record_action(
+        db,
+        ticket_id=ticket.id,
+        actor=actor,
+        action_type="escalated",
+        content=note or f"工单已升级到 {target_pool_code}。",
+        visibility="INTERNAL",
+        context={"target_pool_code": target_pool_code},
+    )
+    create_ticket_event(db, ticket_id=ticket.id, name=TICKET_EVENT_ESCALATED)
+    _commit_ticket_changes(db)
+    _invalidate_ticket_cache(ticket.id)
+    db.refresh(ticket)
+    _publish_ticket_change(ticket, actor, change_type="assigned", occurred_at=now)
+    return build_ticket_detail(db, actor, ticket)
+
+
+def escalate_ticket_to_user(
+    db: Session,
+    actor: ActorContext,
+    ticket_id: int,
+    *,
+    expected_version: int,
+    target_user_id: str,
+    note: str | None = None,
+) -> dict[str, object]:
+    ticket = get_ticket(db, actor, ticket_id)
+    if ticket is None:
+        raise TicketOperationError(404, "Ticket not found")
+    _assert_ticket_version(ticket, expected_version)
+    _assert_can_initiate_escalation(actor, ticket)
+    _assert_no_pending_escalation(db, ticket.id)
+
+    target_user, _, highest_role = _get_active_internal_user(db, target_user_id)
+    now = utcnow()
+    escalation = TicketEscalation(
+        ticket_id=ticket.id,
+        source_level=ticket.responsibility_level,
+        target_level=highest_role,
+        target_user_id=target_user.id,
+        target_pool_code=None,
+        mode=TicketEscalationMode.TO_USER.value,
+        status=TicketEscalationStatus.PENDING_CONFIRM.value,
+        requested_by=actor.user_id,
+        requested_by_name=actor.display_name,
+        requested_at=now,
+        source_pool_code=ticket.current_pool_code,
+        source_assigned_to=ticket.assigned_to,
+        source_assigned_to_user_id=ticket.assigned_to_user_id,
+        source_sub_status=ticket.sub_status,
+    )
+    db.add(escalation)
+    ticket.sub_status = TicketSubStatus.ESCALATION_PENDING_CONFIRM.value
+    ticket.updated_at = now
+    _record_action(
+        db,
+        ticket_id=ticket.id,
+        actor=actor,
+        action_type="escalation_requested",
+        content=note or f"已向 {target_user.display_name} 发起定向升级请求。",
+        visibility="INTERNAL",
+        context={"target_user_id": target_user.id},
+    )
+    create_ticket_event(db, ticket_id=ticket.id, name=TICKET_EVENT_ESCALATION_REQUESTED)
+    _commit_ticket_changes(db)
+    _invalidate_ticket_cache(ticket.id)
+    db.refresh(ticket)
+    db.refresh(escalation)
+    _publish_ticket_change(ticket, actor, change_type="assigned", occurred_at=now)
+
+    deliver_notification(
+        db,
+        user_id=target_user.id,
+        category="ticket_escalation_request",
+        title=f"工单 #{ticket.id} 等待你确认升级",
+        content=f"{actor.display_name} 希望将工单「{ticket.title}」升级给你处理。",
+        related_resource_type="ticket_escalation",
+        related_resource_id=escalation.id,
+        action_required=True,
+        action_type="ticket_escalation",
+        action_status="pending",
+        action_payload={
+            "escalation_id": escalation.id,
+            "ticket_id": ticket.id,
+            "ticket_title": ticket.title,
+            "requester_name": actor.display_name,
+            "source_pool_code": escalation.source_pool_code,
+            "source_assigned_to": escalation.source_assigned_to,
+        },
+    )
+
+    return build_ticket_detail(db, actor, ticket)
+
+
+def accept_ticket_escalation(
+    db: Session,
+    actor: ActorContext,
+    escalation_id: str,
+) -> dict[str, object]:
+    escalation = db.get(TicketEscalation, escalation_id)
+    if escalation is None:
+        raise TicketOperationError(404, "Escalation request not found")
+    if escalation.status != TicketEscalationStatus.PENDING_CONFIRM.value:
+        raise TicketOperationError(409, "Escalation request has already been processed")
+    if escalation.target_user_id != actor.user_id:
+        raise TicketOperationError(403, "Only the target user can process this escalation request")
+
+    ticket = get_ticket(db, actor, escalation.ticket_id)
+    if ticket is None:
+        ticket = _get_ticket_by_id(db, escalation.ticket_id)
+    if ticket is None:
+        raise TicketOperationError(404, "Ticket not found")
+
+    now = utcnow()
+    ticket.assigned_to = actor.display_name
+    ticket.assigned_to_user_id = actor.user_id
+    ticket.current_pool_code = None
+    ticket.responsibility_level = escalation.target_level
+    ticket.sub_status = TicketSubStatus.ESCALATION_CONFIRMED.value
+    ticket.updated_at = now
+    escalation.status = TicketEscalationStatus.ACCEPTED.value
+    escalation.confirmed_by = actor.user_id
+    escalation.confirmed_at = now
+    _record_action(
+        db,
+        ticket_id=ticket.id,
+        actor=actor,
+        action_type="escalation_accepted",
+        content=f"{actor.display_name} 已接受升级请求并接手工单。",
+        visibility="INTERNAL",
+        context={"escalation_id": escalation.id},
+    )
+    create_ticket_event(db, ticket_id=ticket.id, name=TICKET_EVENT_ESCALATION_ACCEPTED)
+    _commit_ticket_changes(db)
+    _invalidate_ticket_cache(ticket.id)
+    db.refresh(ticket)
+    _publish_ticket_change(ticket, actor, change_type="assigned", occurred_at=now)
+    resolve_notification_action(
+        db,
+        user_id=actor.user_id,
+        related_resource_type="ticket_escalation",
+        related_resource_id=escalation.id,
+    )
+
+    if escalation.requested_by != actor.user_id:
+        deliver_notification(
+            db,
+            user_id=escalation.requested_by,
+            category="ticket_escalation_accepted",
+            title=f"工单 #{ticket.id} 升级已被接受",
+            content=f"{actor.display_name} 已接受工单「{ticket.title}」的升级请求。",
+            related_resource_type="ticket",
+            related_resource_id=ticket.id,
+        )
+
+    return build_ticket_detail(db, actor, ticket)
+
+
+def reject_ticket_escalation(
+    db: Session,
+    actor: ActorContext,
+    escalation_id: str,
+    *,
+    reason: str | None = None,
+) -> dict[str, object]:
+    escalation = db.get(TicketEscalation, escalation_id)
+    if escalation is None:
+        raise TicketOperationError(404, "Escalation request not found")
+    if escalation.status != TicketEscalationStatus.PENDING_CONFIRM.value:
+        raise TicketOperationError(409, "Escalation request has already been processed")
+    if escalation.target_user_id != actor.user_id:
+        raise TicketOperationError(403, "Only the target user can process this escalation request")
+
+    ticket = get_ticket(db, actor, escalation.ticket_id)
+    if ticket is None:
+        ticket = _get_ticket_by_id(db, escalation.ticket_id)
+    if ticket is None:
+        raise TicketOperationError(404, "Ticket not found")
+
+    now = utcnow()
+    ticket.assigned_to = escalation.source_assigned_to
+    ticket.assigned_to_user_id = escalation.source_assigned_to_user_id
+    ticket.current_pool_code = escalation.source_pool_code
+    ticket.responsibility_level = escalation.source_level
+    ticket.sub_status = TicketSubStatus.ESCALATION_REJECTED.value
+    ticket.updated_at = now
+    escalation.status = TicketEscalationStatus.REJECTED.value
+    escalation.rejected_by = actor.user_id
+    escalation.rejected_at = now
+    escalation.reject_reason = reason
+    _record_action(
+        db,
+        ticket_id=ticket.id,
+        actor=actor,
+        action_type="escalation_rejected",
+        content=reason or f"{actor.display_name} 已拒绝升级请求，工单恢复原归属。",
+        visibility="INTERNAL",
+        context={"escalation_id": escalation.id},
+    )
+    create_ticket_event(db, ticket_id=ticket.id, name=TICKET_EVENT_ESCALATION_REJECTED)
+    _commit_ticket_changes(db)
+    _invalidate_ticket_cache(ticket.id)
+    db.refresh(ticket)
+    _publish_ticket_change(ticket, actor, change_type="assigned", occurred_at=now)
+    resolve_notification_action(
+        db,
+        user_id=actor.user_id,
+        related_resource_type="ticket_escalation",
+        related_resource_id=escalation.id,
+    )
+
+    if escalation.requested_by != actor.user_id:
+        deliver_notification(
+            db,
+            user_id=escalation.requested_by,
+            category="ticket_escalation_rejected",
+            title=f"工单 #{ticket.id} 升级已被拒绝",
+            content=f"{actor.display_name} 已拒绝工单「{ticket.title}」的升级请求。",
+            related_resource_type="ticket",
+            related_resource_id=ticket.id,
+        )
+
     return build_ticket_detail(db, actor, ticket)
 
 

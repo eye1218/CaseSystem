@@ -9,6 +9,10 @@ export interface NotificationSummary {
   related_resource_type: string | null;
   related_resource_id: string | null;
   status: NotificationStatus;
+  action_required: boolean;
+  action_type: string | null;
+  action_status: string | null;
+  action_payload: Record<string, unknown>;
   created_at: string;
   delivered_at: string | null;
   read_at: string | null;
@@ -61,6 +65,10 @@ export interface NotificationCreatedEvent {
     requires_ack: boolean;
     requires_read: boolean;
     status: NotificationStatus;
+    action_required: boolean;
+    action_type: string | null;
+    action_status: string | null;
+    action_payload: Record<string, unknown>;
   };
 }
 
@@ -77,5 +85,7 @@ export interface NotificationUpdatedEvent {
     delivered_at: string | null;
     read_at: string | null;
     unread_count: number;
+    action_status: string | null;
+    action_payload: Record<string, unknown>;
   };
 }

@@ -32,6 +32,7 @@ export interface TicketSummary {
   sub_status: TicketSubStatus;
   created_by: string;
   assigned_to: string | null;
+  assigned_to_user_id: string | null;
   current_pool_code: string | null;
   responsibility_level: string;
   response_deadline_at: string | null;
@@ -95,6 +96,32 @@ export interface TicketPermissionScope {
   hidden_fields: string[];
 }
 
+
+export interface TicketPendingEscalation {
+  id: string;
+  ticket_id: number;
+  mode: string;
+  status: string;
+  source_level: string;
+  target_level: string;
+  target_user_id: string | null;
+  target_pool_code: string | null;
+  requested_by: string;
+  requested_at: string;
+  reject_reason: string | null;
+  source_pool_code: string | null;
+  source_assigned_to: string | null;
+}
+
+
+export interface InternalTicketUser {
+  id: string;
+  username: string;
+  display_name: string;
+  highest_role_code: string;
+  role_codes: string[];
+}
+
 export interface TicketActivityItem {
   id: string;
   item_type: string;
@@ -111,6 +138,7 @@ export interface TicketActivityItem {
 export interface TicketDetail {
   ticket: TicketSummary;
   available_actions: string[];
+  pending_escalation: TicketPendingEscalation | null;
   activity_feed: TicketActivityItem[];
   related_knowledge: KnowledgeArticleSummary[];
   report_templates: ReportTemplateSummary[];
@@ -125,6 +153,7 @@ export interface TicketDetail {
 export interface TicketLive {
   ticket: TicketSummary;
   available_actions: string[];
+  pending_escalation: TicketPendingEscalation | null;
   activity_feed: TicketActivityItem[];
   raw_alerts: TicketAlert[];
   responsibility_summary: LocalizedText;
@@ -151,6 +180,31 @@ export interface TicketActionPayload {
   note?: string;
 }
 
+
+export interface TicketAssignPayload {
+  version: number;
+  target_user_id: string;
+  note?: string;
+}
+
+
+export interface TicketEscalateToUserPayload {
+  version: number;
+  target_user_id: string;
+  note?: string;
+}
+
+
+export interface TicketEscalateToPoolPayload {
+  version: number;
+  note?: string;
+}
+
+
+export interface TicketEscalationRejectPayload {
+  reason?: string;
+}
+
 export interface TicketCreatePayload {
   title: string;
   description: string;
@@ -159,4 +213,9 @@ export interface TicketCreatePayload {
   risk_score: number;
   assignment_mode?: "unassigned" | "self" | "pool";
   pool_code?: string;
+}
+
+
+export interface InternalTicketUserListResponse {
+  items: InternalTicketUser[];
 }

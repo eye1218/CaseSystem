@@ -1,9 +1,14 @@
 import { apiFetch, apiPatch, apiPost } from "./client";
 import type {
+  InternalTicketUserListResponse,
+  TicketAssignPayload,
   TicketActionPayload,
   TicketCreatePayload,
   TicketCommentPayload,
   TicketDetail,
+  TicketEscalateToPoolPayload,
+  TicketEscalateToUserPayload,
+  TicketEscalationRejectPayload,
   TicketLive,
   TicketListResponse,
   TicketSummary,
@@ -65,4 +70,28 @@ export function runTicketAction(ticketId: string, action: string, payload: Ticke
 
 export function updateTicket(ticketId: string, payload: TicketUpdatePayload) {
   return apiPatch<TicketDetail>(`/api/v1/tickets/${ticketId}`, payload);
+}
+
+export function listInternalTicketUsers() {
+  return apiFetch<InternalTicketUserListResponse>("/api/v1/tickets/internal-target-users");
+}
+
+export function assignTicket(ticketId: string, payload: TicketAssignPayload) {
+  return apiPost<TicketDetail>(`/api/v1/tickets/${ticketId}/assign`, payload);
+}
+
+export function escalateTicketToPool(ticketId: string, payload: TicketEscalateToPoolPayload) {
+  return apiPost<TicketDetail>(`/api/v1/tickets/${ticketId}/escalate-to-pool`, payload);
+}
+
+export function escalateTicketToUser(ticketId: string, payload: TicketEscalateToUserPayload) {
+  return apiPost<TicketDetail>(`/api/v1/tickets/${ticketId}/escalate-to-user`, payload);
+}
+
+export function acceptTicketEscalation(escalationId: string) {
+  return apiPost<TicketDetail>(`/api/v1/ticket-escalations/${escalationId}/accept`, {});
+}
+
+export function rejectTicketEscalation(escalationId: string, payload: TicketEscalationRejectPayload) {
+  return apiPost<TicketDetail>(`/api/v1/ticket-escalations/${escalationId}/reject`, payload);
 }

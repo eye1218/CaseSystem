@@ -10,10 +10,16 @@ from ...auth import ActorContext
 from ...database import get_db
 from ...dependencies import require_auth, require_csrf
 from .schemas import (
+    InternalTicketUserListResponse,
+    InternalTicketUserResponse,
+    TicketAssignRequest,
     TicketActionCommandRequest,
     TicketCommentCreateRequest,
     TicketCreateRequest,
     TicketDetailResponse,
+    TicketEscalateToPoolRequest,
+    TicketEscalateToUserRequest,
+    TicketEscalationRejectRequest,
     TicketLiveResponse,
     TicketListResponse,
     TicketSummaryResponse,
@@ -22,13 +28,19 @@ from .schemas import (
 from .service import (
     TicketOperationError,
     add_ticket_comment,
+    accept_ticket_escalation,
+    assign_ticket,
     create_ticket,
+    escalate_ticket_to_pool,
+    escalate_ticket_to_user,
     execute_ticket_action,
     get_report_download,
     get_ticket,
     get_ticket_detail,
     get_ticket_live,
     get_ticket_summary,
+    list_internal_ticket_users,
+    reject_ticket_escalation,
     list_tickets,
     update_ticket_detail,
 )
@@ -105,6 +117,23 @@ def ticket_create(
     except TicketOperationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     return TicketDetailResponse.model_validate(detail)
+
+
+@ticket_router.get(
+    "/api/v1/tickets/internal-target-users",
+    response_model=InternalTicketUserListResponse,
+)
+def ticket_internal_target_users(
+    actor: Annotated[ActorContext, Depends(require_auth)],
+    db: Annotated[Session, Depends(get_db)],
+) -> InternalTicketUserListResponse:
+    try:
+        items = list_internal_ticket_users(db, actor)
+    except TicketOperationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return InternalTicketUserListResponse(
+        items=[InternalTicketUserResponse.model_validate(item) for item in items]
+    )
 
 
 @ticket_router.get("/api/v1/tickets/{ticket_id}", response_model=TicketSummaryResponse)
@@ -218,6 +247,120 @@ def ticket_action(
             action,
             payload.version,
             payload.note,
+        )
+    except TicketOperationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return TicketDetailResponse.model_validate(detail)
+
+
+@ticket_router.post(
+    "/api/v1/tickets/{ticket_id}/assign",
+    response_model=TicketDetailResponse,
+    dependencies=[Depends(require_csrf)],
+)
+def ticket_assign(
+    ticket_id: int,
+    payload: TicketAssignRequest,
+    actor: Annotated[ActorContext, Depends(require_auth)],
+    db: Annotated[Session, Depends(get_db)],
+) -> TicketDetailResponse:
+    try:
+        detail = assign_ticket(
+            db,
+            actor,
+            ticket_id,
+            expected_version=payload.version,
+            target_user_id=payload.target_user_id,
+            note=payload.note,
+        )
+    except TicketOperationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return TicketDetailResponse.model_validate(detail)
+
+
+@ticket_router.post(
+    "/api/v1/tickets/{ticket_id}/escalate-to-pool",
+    response_model=TicketDetailResponse,
+    dependencies=[Depends(require_csrf)],
+)
+def ticket_escalate_to_pool(
+    ticket_id: int,
+    payload: TicketEscalateToPoolRequest,
+    actor: Annotated[ActorContext, Depends(require_auth)],
+    db: Annotated[Session, Depends(get_db)],
+) -> TicketDetailResponse:
+    try:
+        detail = escalate_ticket_to_pool(
+            db,
+            actor,
+            ticket_id,
+            expected_version=payload.version,
+            note=payload.note,
+        )
+    except TicketOperationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return TicketDetailResponse.model_validate(detail)
+
+
+@ticket_router.post(
+    "/api/v1/tickets/{ticket_id}/escalate-to-user",
+    response_model=TicketDetailResponse,
+    dependencies=[Depends(require_csrf)],
+)
+def ticket_escalate_to_user(
+    ticket_id: int,
+    payload: TicketEscalateToUserRequest,
+    actor: Annotated[ActorContext, Depends(require_auth)],
+    db: Annotated[Session, Depends(get_db)],
+) -> TicketDetailResponse:
+    try:
+        detail = escalate_ticket_to_user(
+            db,
+            actor,
+            ticket_id,
+            expected_version=payload.version,
+            target_user_id=payload.target_user_id,
+            note=payload.note,
+        )
+    except TicketOperationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return TicketDetailResponse.model_validate(detail)
+
+
+@ticket_router.post(
+    "/api/v1/ticket-escalations/{escalation_id}/accept",
+    response_model=TicketDetailResponse,
+    dependencies=[Depends(require_csrf)],
+)
+def ticket_escalation_accept(
+    escalation_id: str,
+    actor: Annotated[ActorContext, Depends(require_auth)],
+    db: Annotated[Session, Depends(get_db)],
+) -> TicketDetailResponse:
+    try:
+        detail = accept_ticket_escalation(db, actor, escalation_id)
+    except TicketOperationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return TicketDetailResponse.model_validate(detail)
+
+
+@ticket_router.post(
+    "/api/v1/ticket-escalations/{escalation_id}/reject",
+    response_model=TicketDetailResponse,
+    dependencies=[Depends(require_csrf)],
+)
+def ticket_escalation_reject(
+    escalation_id: str,
+    payload: TicketEscalationRejectRequest,
+    actor: Annotated[ActorContext, Depends(require_auth)],
+    db: Annotated[Session, Depends(get_db)],
+) -> TicketDetailResponse:
+    try:
+        detail = reject_ticket_escalation(
+            db,
+            actor,
+            escalation_id,
+            reason=payload.reason,
         )
     except TicketOperationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

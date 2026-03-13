@@ -1,6 +1,7 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 
 import { useAuth } from "../contexts/AuthContext";
+import ActionRequiredNotificationStack from "./ActionRequiredNotificationStack";
 import AppHeader from "./AppHeader";
 import AppSidebar from "./AppSidebar";
 
@@ -28,6 +29,7 @@ export default function MainLayout() {
         <main className="min-h-0 flex-1 overflow-auto">
           <Outlet />
         </main>
+        <ActionRequiredNotificationStack />
       </div>
     </div>
   );

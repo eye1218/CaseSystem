@@ -274,3 +274,21 @@
 2. 解决测试文件冲突时，要把“行为断言”和“数据映射断言”都保住，不要只保留一半。
    - 这次 `frontend/tests/relatedKnowledge.test.ts` 的 stash 里除了点击行为，还额外覆盖了 `KnowledgeArticleDetail -> KnowledgeDrawer` 的映射断言
    - 稳定做法是先对比 stash 版本和当前文件，再手工合并有效断言，最后跑单测确认
+
+## 2026-03-13 工单升级逻辑
+
+1. FastAPI 在同一路由前缀下混用静态路径和动态路径时，静态路径必须先注册。
+   - 这次 `GET /api/v1/tickets/internal-target-users` 最初声明在 `/api/v1/tickets/{ticket_id}` 后面，结果前端请求会被错误匹配到动态路由，直接报 `ticket_id` 整数解析失败
+   - 稳定做法是把静态路径放在动态路径前，或者拆到更明确的子路由前缀
+2. 本地联调涉及新增通知字段时，不要继续复用历史 SQLite 库直接验页面。
+   - 这次 `user_notifications` 新增了 `action_required`、`action_status`、`action_payload`，旧本地库会在 `/api/v1/notifications` 直接触发 `no such column` 500
+   - 稳定做法是本地 UI 验收时使用一份新库，或者先执行明确的迁移/重建步骤
+3. Event 规则触发点枚举要和业务文档里的升级阶段保持全量一致，不要只补“接受/拒绝”而漏掉“请求发起”。
+   - 这次工单升级文档要求“升级给指定用户”本身也能触发 Event，但事件模块最初只支持 `ticket.escalation.accepted` / `ticket.escalation.rejected`
+   - 最终补齐了 `ticket.escalation.requested`，否则规则配置层会把文档里定义的触发点直接判成非法值
+4. 待确认的定向升级不能继续暴露领取、分配、再次升级这类归属流转操作。
+   - 否则目标用户拒绝时，系统会尝试回滚到一份已经被后续操作改变过的旧归属快照，语义会立刻失真
+   - 稳定做法是在 `pending escalation` 存在时，同时从后端可用动作和写接口层面阻断新的归属流转
+5. Figma MCP 抓本地 SPA 时，如果前端入口脚本是后加进去的，当前浏览器标签页不一定会自动拿到新的 `<script src=\"capture.js\">`。
+   - 这次第一次轮询一直 `pending`，根因是页面实际还在用旧的 `index.html`
+   - 更稳妥的做法是先确认 `document.head` 中确实存在抓取脚本，再在已登录页面里直接执行 `window.figma.captureForDesign(...)`

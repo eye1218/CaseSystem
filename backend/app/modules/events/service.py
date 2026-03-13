@@ -33,6 +33,7 @@ TRIGGER_POINT_LABELS: dict[str, str] = {
     "ticket.closed": "工单关闭",
     "ticket.reopened": "工单重开",
     "ticket.escalated": "工单升级",
+    "ticket.escalation.requested": "升级给指定人员已发起",
     "ticket.escalation.rejected": "升级给指定人员被拒",
     "ticket.escalation.accepted": "升级被接收",
 }

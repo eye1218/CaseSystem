@@ -192,3 +192,18 @@
 2. `frontend/tests/relatedKnowledge.test.ts` 的 stash 版本和工作区版本一度不一致。
    - 工作区文件只保留了点击跳转/抽屉分流断言，stash 里还包含抽屉映射断言
    - 已通过手工合并和单测验证解决，但后续如果再次整理 stash，需要避免把这类测试回退成半覆盖状态
+
+## 2026-03-13 工单升级逻辑
+
+1. 工单升级页面联调时，`GET /api/v1/tickets/internal-target-users` 一度返回 `422 int_parsing`。
+   - 原因是 FastAPI 把 `internal-target-users` 错误匹配到了 `/api/v1/tickets/{ticket_id}`
+   - 已通过调整路由声明顺序解决
+2. 本地旧 SQLite 库无法直接承载新增的升级通知字段。
+   - 具体现象是 `/api/v1/notifications` 返回 `500`，错误为 `no such column: user_notifications.action_required`
+   - 当前已改用临时新库完成验收；如果后续继续使用旧库，还需要显式迁移或重建
+3. Event 规则模块最初不支持 `ticket.escalation.requested`。
+   - 具体现象是升级相关验收测试在创建事件规则时直接收到 `trigger_point: Unsupported trigger point`
+   - 已补齐触发点枚举并通过复测
+4. Figma 本地抓图第一次一直停在 `pending`。
+   - 具体现象是 capture ID 已生成，但轮询没有完成，页面里也没有自动提交请求
+   - 最终通过确认抓取脚本已真正进入页面头部后，手动调用 `window.figma.captureForDesign(...)` 完成提交

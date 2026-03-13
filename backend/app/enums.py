@@ -68,6 +68,17 @@ class TicketSubStatus(str, Enum):
     ESCALATION_REJECTED = "ESCALATION_REJECTED"
 
 
+class TicketEscalationMode(str, Enum):
+    TO_USER = "TO_USER"
+    TO_POOL = "TO_POOL"
+
+
+class TicketEscalationStatus(str, Enum):
+    PENDING_CONFIRM = "PENDING_CONFIRM"
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
+
+
 class TicketPriority(str, Enum):
     P1 = "P1"
     P2 = "P2"

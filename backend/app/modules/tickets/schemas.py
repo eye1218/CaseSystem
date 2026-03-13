@@ -23,6 +23,7 @@ class TicketSummaryResponse(BaseModel):
     sub_status: str
     created_by: str
     assigned_to: str | None
+    assigned_to_user_id: str | None = None
     current_pool_code: str | None
     responsibility_level: str
     response_deadline_at: datetime | None
@@ -121,6 +122,30 @@ class TicketPermissionScopeResponse(BaseModel):
     hidden_fields: list[str]
 
 
+class TicketEscalationSummaryResponse(BaseModel):
+    id: str
+    ticket_id: int
+    mode: str
+    status: str
+    source_level: str
+    target_level: str
+    target_user_id: str | None = None
+    target_pool_code: str | None = None
+    requested_by: str
+    requested_at: datetime
+    reject_reason: str | None = None
+    source_pool_code: str | None = None
+    source_assigned_to: str | None = None
+
+
+class InternalTicketUserResponse(BaseModel):
+    id: str
+    username: str
+    display_name: str
+    highest_role_code: str
+    role_codes: list[str]
+
+
 class TicketActivityItemResponse(BaseModel):
     id: str
     item_type: str
@@ -137,6 +162,7 @@ class TicketActivityItemResponse(BaseModel):
 class TicketDetailResponse(BaseModel):
     ticket: TicketSummaryResponse
     available_actions: list[str]
+    pending_escalation: TicketEscalationSummaryResponse | None = None
     activity_feed: list[TicketActivityItemResponse]
     related_knowledge: list[KnowledgeArticleSummaryResponse]
     report_templates: list[ReportTemplateSummaryResponse]
@@ -151,6 +177,7 @@ class TicketDetailResponse(BaseModel):
 class TicketLiveResponse(BaseModel):
     ticket: TicketSummaryResponse
     available_actions: list[str]
+    pending_escalation: TicketEscalationSummaryResponse | None = None
     activity_feed: list[TicketActivityItemResponse]
     raw_alerts: list[TicketAlertResponse]
     responsibility_summary: LocalizedTextResponse
@@ -187,3 +214,28 @@ class TicketUpdateRequest(BaseModel):
 class TicketActionCommandRequest(BaseModel):
     version: int = Field(ge=1)
     note: str | None = Field(default=None, max_length=1000)
+
+
+class TicketAssignRequest(BaseModel):
+    version: int = Field(ge=1)
+    target_user_id: str = Field(min_length=1, max_length=36)
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class TicketEscalateToPoolRequest(BaseModel):
+    version: int = Field(ge=1)
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class TicketEscalateToUserRequest(BaseModel):
+    version: int = Field(ge=1)
+    target_user_id: str = Field(min_length=1, max_length=36)
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class TicketEscalationRejectRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class InternalTicketUserListResponse(BaseModel):
+    items: list[InternalTicketUserResponse]

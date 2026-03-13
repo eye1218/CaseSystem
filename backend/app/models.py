@@ -312,7 +312,7 @@ class TicketReport(TimestampMixin, Base):
     source_template: Mapped[Optional[ReportTemplate]] = relationship(back_populates="reports")
 
 
-from .modules.tickets.models import Ticket, TicketAction, TicketComment
+from .modules.tickets.models import Ticket, TicketAction, TicketComment, TicketEscalation
 from .modules.events.models import Event, EventBinding, EventRule, EventRuleBinding
 from .modules.knowledge.models import KnowledgeArticle, KnowledgeArticleLike
 from .modules.realtime.models import UserNotification

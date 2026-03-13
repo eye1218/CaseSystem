@@ -183,3 +183,12 @@
    - 这次对任务模板页追加到已有 Figma 文件的捕获就出现了该问题
    - 页面脚本已注入、`window.figma` 也存在，但没有自动发出提交请求
    - 最终通过手动调用 `window.figma.captureForDesign(...)` 完成提交
+
+## 2026-03-13 分支与工作区合并判断
+
+1. 当前仓库存在多个过期分支：`codex/event-module`、`codex/report-module`、`event-module-design`。
+   - 它们相对 `main` 的 diff 不是“补充功能”，而是大面积删除当前主线已经存在的模块和页面
+   - 直接合并这些分支会把现有任务模块、报告模块、知识库抽屉相关文件一并回退
+2. `frontend/tests/relatedKnowledge.test.ts` 的 stash 版本和工作区版本一度不一致。
+   - 工作区文件只保留了点击跳转/抽屉分流断言，stash 里还包含抽屉映射断言
+   - 已通过手工合并和单测验证解决，但后续如果再次整理 stash，需要避免把这类测试回退成半覆盖状态

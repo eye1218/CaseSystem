@@ -265,3 +265,12 @@
    - 这次 `generate_figma_design` 的 `existingFile` 捕获一直停在 `pending`
    - 页面里虽然已经存在 `window.figma`，但没有出现提交请求
    - 更稳妥的做法是确认脚本已加载后，直接在页面里执行 `window.figma.captureForDesign({ captureId, endpoint, selector: 'body' })`
+
+## 2026-03-13 分支与工作区合并判断
+
+1. 合并历史分支前，先看 `git diff --stat main..branch`，不要只看提交标题。
+   - 这次 `codex/event-module`、`codex/report-module`、`event-module-design` 虽然各自有独有提交，但实际 diff 都会大面积删除当前主线已有的任务、报告、知识库和前端页面代码
+   - 这类分支应视为过期实现，不能直接 merge；只有树内容仍和当前主线兼容的提交才值得 cherry-pick
+2. 解决测试文件冲突时，要把“行为断言”和“数据映射断言”都保住，不要只保留一半。
+   - 这次 `frontend/tests/relatedKnowledge.test.ts` 的 stash 里除了点击行为，还额外覆盖了 `KnowledgeArticleDetail -> KnowledgeDrawer` 的映射断言
+   - 稳定做法是先对比 stash 版本和当前文件，再手工合并有效断言，最后跑单测确认

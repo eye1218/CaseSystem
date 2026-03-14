@@ -17,6 +17,7 @@ export type TicketSubStatus =
   | "ESCALATION_REJECTED";
 
 export type TicketPriority = "P1" | "P2" | "P3" | "P4";
+export type TicketClaimStatus = "claimed" | "unclaimed";
 
 export interface TicketSummary {
   id: number;
@@ -49,6 +50,9 @@ export interface TicketSummary {
 export interface TicketListResponse {
   items: TicketSummary[];
   total_count: number;
+  filtered_count?: number;
+  has_more?: boolean;
+  next_offset?: number | null;
 }
 
 export interface LocalizedText {

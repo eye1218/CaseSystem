@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from sqlalchemy import select
+
 from app.modules.events.tasks import sweep_due_events
+from app.modules.tasks.models import TaskTemplate
 
 from .conftest import issue_csrf, login
 
@@ -82,6 +85,30 @@ def create_task_template(
             "recipient_config": recipient_config
             or {"to": [{"source_type": "CUSTOM_EMAIL", "value": "soc@example.com"}], "cc": [], "bcc": []},
             "target_config": target_config or {},
+        },
+        headers=auth_headers(client),
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def create_mail_sender(
+    client,
+    *,
+    status: str = "ENABLED",
+    sender_email: str = "sender.task@example.com",
+) -> dict:
+    response = client.post(
+        "/api/v1/mail-senders",
+        json={
+            "sender_name": "任务发送者",
+            "sender_email": sender_email,
+            "auth_account": "smtp.account@example.com",
+            "auth_password": "SenderForTask123!",
+            "smtp_host": "smtp.example.com",
+            "smtp_port": 587,
+            "security_type": "STARTTLS",
+            "status": status,
         },
         headers=auth_headers(client),
     )
@@ -520,3 +547,106 @@ def test_webhook_get_ignores_body_on_delivery(client, monkeypatch):
 
     assert captured_request["method"] == "GET"
     assert captured_request["body"] is None
+
+
+def test_task_execution_rejects_disabled_mail_sender(client, monkeypatch):
+    login(client, "admin", "AdminPass123")
+    switch_role(client, "ADMIN")
+
+    sender = create_mail_sender(client, status="ENABLED")
+    email_template = create_active_render_template(
+        client,
+        template_type="EMAIL",
+        code="task_email_sender_disabled_template",
+    )
+    task_template = create_task_template(
+        client,
+        name="停用发送者任务",
+        task_type="EMAIL",
+        reference_template_id=email_template["id"],
+        target_config={"sender_config_id": sender["id"]},
+    )
+
+    disable_sender = client.post(
+        f"/api/v1/mail-senders/{sender['id']}/status",
+        json={"status": "DISABLED"},
+        headers=auth_headers(client),
+    )
+    assert disable_sender.status_code == 200, disable_sender.text
+
+    delivery_calls = {"count": 0}
+
+    def fake_email_delivery(**_kwargs):
+        delivery_calls["count"] += 1
+        return {"provider": "stub-email", "accepted": 1}
+
+    monkeypatch.setattr(
+        "app.modules.tasks.service.deliver_email",
+        fake_email_delivery,
+        raising=False,
+    )
+
+    create_event_rule(client, task_template_ids=[task_template["id"]])
+    create_ticket(client)
+    sweep_due_events()
+
+    failed_task = next(
+        item
+        for item in client.get("/api/v1/tasks", params={"status": "FAILED"}).json()["items"]
+        if item["task_template_id"] == task_template["id"]
+    )
+    assert "sender" in failed_task["error_message"].lower()
+    assert "disabled" in failed_task["error_message"].lower()
+    assert delivery_calls["count"] == 0
+
+
+def test_task_execution_rejects_missing_mail_sender(client, db_session_factory, monkeypatch):
+    login(client, "admin", "AdminPass123")
+    switch_role(client, "ADMIN")
+
+    sender = create_mail_sender(client, status="ENABLED")
+    email_template = create_active_render_template(
+        client,
+        template_type="EMAIL",
+        code="task_email_sender_missing_template",
+    )
+    task_template = create_task_template(
+        client,
+        name="缺失发送者任务",
+        task_type="EMAIL",
+        reference_template_id=email_template["id"],
+        target_config={"sender_config_id": sender["id"]},
+    )
+
+    with db_session_factory() as db:
+        record = db.scalar(select(TaskTemplate).where(TaskTemplate.id == task_template["id"]))
+        assert record is not None
+        updated_target = dict(record.target_config or {})
+        updated_target["sender_config_id"] = "sender-missing-id"
+        record.target_config = updated_target
+        db.commit()
+
+    delivery_calls = {"count": 0}
+
+    def fake_email_delivery(**_kwargs):
+        delivery_calls["count"] += 1
+        return {"provider": "stub-email", "accepted": 1}
+
+    monkeypatch.setattr(
+        "app.modules.tasks.service.deliver_email",
+        fake_email_delivery,
+        raising=False,
+    )
+
+    create_event_rule(client, task_template_ids=[task_template["id"]])
+    create_ticket(client)
+    sweep_due_events()
+
+    failed_task = next(
+        item
+        for item in client.get("/api/v1/tasks", params={"status": "FAILED"}).json()["items"]
+        if item["task_template_id"] == task_template["id"]
+    )
+    assert "sender" in failed_task["error_message"].lower()
+    assert "not found" in failed_task["error_message"].lower()
+    assert delivery_calls["count"] == 0

@@ -105,7 +105,7 @@ export default function KnowledgeDrawer({
         transition: "width 280ms cubic-bezier(0.4,0,0.2,1), margin-left 280ms cubic-bezier(0.4,0,0.2,1)"
       }}
     >
-      <div className="relative flex h-full w-[560px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
+      <div className="relative flex max-h-[calc(100vh-3rem)] w-[560px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
         {article ? (
           <>
             <div className="border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from ...auth import ActorContext
@@ -64,31 +64,46 @@ def ticket_list(
     actor: Annotated[ActorContext, Depends(require_auth)],
     db: Annotated[Session, Depends(get_db)],
     ticket_id: str | None = None,
-    category_id: str | None = None,
-    priority: str | None = None,
-    main_status: str | None = None,
+    category_id: Annotated[list[str] | None, Query()] = None,
+    priority: Annotated[list[str] | None, Query()] = None,
+    main_status: Annotated[list[str] | None, Query()] = None,
     sub_status: str | None = None,
+    claim_status: Annotated[list[str] | None, Query()] = None,
+    pool_code: Annotated[list[str] | None, Query()] = None,
     created_from: str | None = None,
     created_to: str | None = None,
     sort_by: str = "id",
     sort_dir: str = "desc",
+    assigned_to_me: bool = Query(default=False),
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> TicketListResponse:
-    items, total_count = list_tickets(
+    items, total_count, filtered_count = list_tickets(
         db,
         actor,
         ticket_id=ticket_id,
-        category_id=category_id,
-        priority=priority,
-        main_status=main_status,
+        category_ids=category_id,
+        priorities=priority,
+        main_statuses=main_status,
         sub_status=sub_status,
+        claim_statuses=claim_status,
+        pool_codes=pool_code,
         created_from=parse_created_range(created_from),
         created_to=parse_created_range(created_to, end_of_day=True),
         sort_by=sort_by,
         sort_dir=sort_dir,
+        assigned_to_me=assigned_to_me,
+        limit=limit,
+        offset=offset,
     )
+    next_offset = offset + len(items)
+    has_more = next_offset < filtered_count
     return TicketListResponse(
         items=[TicketSummaryResponse.model_validate(item) for item in items],
         total_count=total_count,
+        filtered_count=filtered_count,
+        has_more=has_more,
+        next_offset=next_offset if has_more else None,
     )
 
 

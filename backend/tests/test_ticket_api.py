@@ -18,24 +18,106 @@ def test_internal_user_can_list_tickets_and_filter(client):
     assert payload["total_count"] == 5
     assert len(payload["items"]) == 5
 
-    filtered = client.get("/api/v1/tickets", params={"priority": "P1", "main_status": "IN_PROGRESS"})
+    filtered = client.get(
+        "/api/v1/tickets",
+        params=[
+            ("priority", "P1"),
+            ("main_status", "IN_PROGRESS"),
+            ("claim_status", "claimed"),
+        ],
+    )
     assert filtered.status_code == 200
     filtered_payload = filtered.json()
     assert filtered_payload["total_count"] == 5
     assert [item["id"] for item in filtered_payload["items"]] == [100182]
 
 
-def test_customer_only_sees_owned_tickets(client):
+def test_internal_user_can_filter_only_assigned_to_self(client):
+    login(client, "admin", "AdminPass123")
+
+    response = client.get("/api/v1/tickets", params={"assigned_to_me": True})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_count"] == 5
+    assert payload["filtered_count"] == 3
+    assert [item["id"] for item in payload["items"]] == [100182, 100181, 100161]
+    assert all(item["assigned_to_user_id"] == "user-admin" for item in payload["items"])
+
+
+def test_non_admin_internal_user_can_list_all_tickets_by_default(client):
+    login(client, "analyst", "AnalystPass123")
+
+    response = client.get("/api/v1/tickets")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_count"] == 5
+    assert payload["filtered_count"] == 5
+    assert [item["id"] for item in payload["items"]] == [100182, 100181, 100177, 100169, 100161]
+
+
+def test_ticket_list_supports_limit_offset_and_filtered_metadata(client):
+    login(client, "admin", "AdminPass123")
+
+    first_page = client.get("/api/v1/tickets", params={"limit": 2, "offset": 0})
+    assert first_page.status_code == 200
+    first_payload = first_page.json()
+    assert first_payload["total_count"] == 5
+    assert first_payload["filtered_count"] == 5
+    assert first_payload["has_more"] is True
+    assert first_payload["next_offset"] == 2
+    assert [item["id"] for item in first_payload["items"]] == [100182, 100181]
+
+    second_page = client.get("/api/v1/tickets", params={"limit": 2, "offset": 2})
+    assert second_page.status_code == 200
+    second_payload = second_page.json()
+    assert second_payload["total_count"] == 5
+    assert second_payload["filtered_count"] == 5
+    assert second_payload["has_more"] is True
+    assert second_payload["next_offset"] == 4
+    assert [item["id"] for item in second_payload["items"]] == [100177, 100169]
+
+    last_page = client.get("/api/v1/tickets", params={"limit": 2, "offset": 4})
+    assert last_page.status_code == 200
+    last_payload = last_page.json()
+    assert last_payload["total_count"] == 5
+    assert last_payload["filtered_count"] == 5
+    assert last_payload["has_more"] is False
+    assert last_payload["next_offset"] is None
+    assert [item["id"] for item in last_payload["items"]] == [100161]
+
+    filtered_page = client.get(
+        "/api/v1/tickets",
+        params=[
+            ("priority", "P1"),
+            ("priority", "P2"),
+            ("main_status", "IN_PROGRESS"),
+            ("main_status", "WAITING_RESPONSE"),
+            ("claim_status", "unclaimed"),
+            ("pool_code", "T2_POOL"),
+            ("limit", "2"),
+            ("offset", "0"),
+        ],
+    )
+    assert filtered_page.status_code == 200
+    filtered_page_payload = filtered_page.json()
+    assert filtered_page_payload["total_count"] == 5
+    assert filtered_page_payload["filtered_count"] == 1
+    assert filtered_page_payload["has_more"] is False
+    assert filtered_page_payload["next_offset"] is None
+    assert [item["id"] for item in filtered_page_payload["items"]] == [100177]
+
+
+def test_customer_can_list_all_tickets_in_single_tenant_mode(client):
     login(client, "customer", "CustomerPass123")
 
     response = client.get("/api/v1/tickets")
     assert response.status_code == 200
     payload = response.json()
-    assert payload["total_count"] == 2
-    assert {item["id"] for item in payload["items"]} == {100181, 100161}
+    assert payload["total_count"] == 5
+    assert {item["id"] for item in payload["items"]} == {100182, 100181, 100177, 100169, 100161}
 
     detail = client.get("/api/v1/tickets/100182")
-    assert detail.status_code == 404
+    assert detail.status_code == 200
 
 
 def test_ticket_detail_returns_single_ticket(client):
@@ -88,7 +170,7 @@ def test_internal_user_can_create_ticket_into_pool(client):
     assert payload["activity_feed"][-1]["item_type"] == "created"
 
 
-def test_customer_can_create_ticket_and_only_see_own_ticket(client):
+def test_customer_can_create_ticket_and_see_global_ticket_list(client):
     login(client, "customer", "CustomerPass123")
     csrf = issue_csrf(client)
 

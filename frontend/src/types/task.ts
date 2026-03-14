@@ -19,6 +19,7 @@ export interface TaskTemplateSummary {
   name: string;
   task_type: Extract<TaskType, "EMAIL" | "WEBHOOK">;
   reference_template_id: string;
+  sender_config_id?: string | null;
   status: TaskTemplateStatus;
   recipient_config: TaskRecipientConfig;
   target_config: Record<string, unknown>;
@@ -36,6 +37,7 @@ export interface TaskTemplatePayload {
   name: string;
   task_type: Extract<TaskType, "EMAIL" | "WEBHOOK">;
   reference_template_id: string;
+  sender_config_id?: string | null;
   status: TaskTemplateStatus;
   recipient_config: TaskRecipientConfig;
   target_config: Record<string, unknown>;
@@ -45,6 +47,7 @@ export interface TaskTemplatePayload {
 export interface TaskTemplateUpdatePayload {
   name?: string;
   reference_template_id?: string;
+  sender_config_id?: string | null;
   recipient_config?: TaskRecipientConfig;
   target_config?: Record<string, unknown>;
   description?: string | null;

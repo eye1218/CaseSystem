@@ -86,9 +86,15 @@ TICKET_VERSION_CONFLICT_MESSAGE = "数据已变更，请刷新后重试"
 def _base_conditions(actor: ActorContext) -> list[ColumnElement[bool]]:
     conditions: list[ColumnElement[bool]] = []
     conditions.append(Ticket.is_deleted.is_(False))
-    if actor.active_role == RoleCode.CUSTOMER.value:
-        conditions.append(Ticket.customer_user_id == actor.user_id)
     return conditions
+
+
+def _ticket_has_assignee_expression() -> ColumnElement[bool]:
+    return or_(Ticket.assigned_to_user_id.is_not(None), Ticket.assigned_to.is_not(None))
+
+
+def _ticket_has_no_assignee_expression() -> ColumnElement[bool]:
+    return and_(Ticket.assigned_to_user_id.is_(None), Ticket.assigned_to.is_(None))
 
 
 def list_tickets(
@@ -96,15 +102,20 @@ def list_tickets(
     actor: ActorContext,
     *,
     ticket_id: str | None = None,
-    category_id: str | None = None,
-    priority: str | None = None,
-    main_status: str | None = None,
+    category_ids: list[str] | None = None,
+    priorities: list[str] | None = None,
+    main_statuses: list[str] | None = None,
     sub_status: str | None = None,
+    claim_statuses: list[str] | None = None,
+    pool_codes: list[str] | None = None,
     created_from: datetime | None = None,
     created_to: datetime | None = None,
     sort_by: str = "id",
     sort_dir: str = "desc",
-) -> tuple[list[Ticket], int]:
+    assigned_to_me: bool = False,
+    limit: int | None = None,
+    offset: int = 0,
+) -> tuple[list[Ticket], int, int]:
     conditions = _base_conditions(actor)
     total_count = (
         db.scalar(select(func.count()).select_from(Ticket).where(*conditions)) or 0
@@ -112,18 +123,30 @@ def list_tickets(
 
     if ticket_id:
         conditions.append(cast(Ticket.id, String).like(f"%{ticket_id}%"))
-    if category_id:
-        conditions.append(Ticket.category_id == category_id)
-    if priority:
-        conditions.append(Ticket.priority == priority)
-    if main_status:
-        conditions.append(Ticket.main_status == main_status)
+    if category_ids:
+        conditions.append(Ticket.category_id.in_(category_ids))
+    if priorities:
+        conditions.append(Ticket.priority.in_(priorities))
+    if main_statuses:
+        conditions.append(Ticket.main_status.in_(main_statuses))
     if sub_status:
         conditions.append(Ticket.sub_status == sub_status)
+    if pool_codes:
+        conditions.append(Ticket.current_pool_code.in_(pool_codes))
+    if claim_statuses:
+        normalized_claim_statuses = {value for value in claim_statuses if value in {"claimed", "unclaimed"}}
+        if not normalized_claim_statuses:
+            raise TicketOperationError(422, "Unsupported claim status filter")
+        if normalized_claim_statuses == {"claimed"}:
+            conditions.append(_ticket_has_assignee_expression())
+        elif normalized_claim_statuses == {"unclaimed"}:
+            conditions.append(_ticket_has_no_assignee_expression())
     if created_from:
         conditions.append(Ticket.created_at >= created_from)
     if created_to:
         conditions.append(Ticket.created_at <= created_to)
+    if assigned_to_me:
+        conditions.append(Ticket.assigned_to_user_id == actor.user_id)
 
     sort_map = {
         "id": Ticket.id,
@@ -136,8 +159,18 @@ def list_tickets(
     sort_column = sort_map.get(sort_by, Ticket.id)
     order_by = sort_column.asc() if sort_dir == "asc" else sort_column.desc()
 
-    items = list(db.scalars(select(Ticket).where(*conditions).order_by(order_by)).all())
-    return items, total_count
+    filtered_count = (
+        db.scalar(select(func.count()).select_from(Ticket).where(*conditions)) or 0
+    )
+
+    statement = select(Ticket).where(*conditions).order_by(order_by)
+    if offset > 0:
+        statement = statement.offset(offset)
+    if limit is not None:
+        statement = statement.limit(limit)
+
+    items = list(db.scalars(statement).all())
+    return items, total_count, filtered_count
 
 
 def get_ticket(db: Session, actor: ActorContext, ticket_id: int) -> Ticket | None:
@@ -157,9 +190,7 @@ def _actor_can_access_ticket(
 ) -> bool:
     if is_deleted:
         return False
-    if actor.active_role != RoleCode.CUSTOMER.value:
-        return True
-    return bool(customer_user_id) and customer_user_id == actor.user_id
+    return True
 
 
 def _serialize_ticket(ticket: Ticket) -> dict[str, object]:
@@ -304,8 +335,11 @@ def _actor_can_claim_pool(actor: ActorContext, pool_code: str | None) -> bool:
 
 def _assert_valid_ownership_state(ticket: Ticket) -> None:
     has_pool = bool(ticket.current_pool_code)
-    has_owner = bool(ticket.assigned_to_user_id)
-    if has_pool == has_owner:
+    has_owner_name = bool(ticket.assigned_to)
+    has_owner_user = bool(ticket.assigned_to_user_id)
+    if has_owner_name != has_owner_user:
+        raise TicketOperationError(409, "Ticket ownership state is invalid")
+    if not has_pool and not has_owner_user:
         raise TicketOperationError(409, "Ticket ownership state is invalid")
 
 
@@ -414,7 +448,11 @@ def _available_actions(
 
     actions.append("edit")
     if not has_pending_escalation:
-        if ticket.current_pool_code and _actor_can_claim_pool(actor, ticket.current_pool_code):
+        if (
+            ticket.current_pool_code
+            and ticket.assigned_to_user_id is None
+            and _actor_can_claim_pool(actor, ticket.current_pool_code)
+        ):
             actions.append("claim")
             if _next_pool_code(ticket.current_pool_code, ticket.responsibility_level):
                 actions.append("escalate_pool")
@@ -451,6 +489,12 @@ def _available_actions(
 
 
 def _responsibility_summary(ticket: Ticket) -> dict[str, str]:
+    if ticket.current_pool_code and ticket.assigned_to:
+        return {
+            "zh": f"当前工单位于 {ticket.current_pool_code}，由 {ticket.assigned_to} 负责处理。",
+            "en": f"The ticket is currently tracked in {ticket.current_pool_code} and assigned to {ticket.assigned_to}.",
+        }
+
     if ticket.current_pool_code:
         return {
             "zh": f"当前工单位于 {ticket.current_pool_code}，仍未被具体人员领取，责任归属以池子为准。",
@@ -467,7 +511,7 @@ def _permission_scope(actor: ActorContext) -> dict[str, object]:
     if actor.active_role == RoleCode.CUSTOMER.value:
         return {
             "current_role": actor.active_role,
-            "page_scope": "仅可查看本人授权范围内工单",
+            "page_scope": "单租户模式下可查看当前系统全部工单",
             "comment_scope": "仅显示公开评论与公开进展",
             "hidden_fields": ["内部升级细节", "内部审计备注", "内部研判结论"],
         }
@@ -997,6 +1041,10 @@ def execute_ticket_action(
 
     if action == "claim" and ticket.current_pool_code is None:
         raise TicketOperationError(409, "Ticket has already been claimed")
+    if action == "claim" and (
+        ticket.assigned_to_user_id is not None or ticket.assigned_to is not None
+    ):
+        raise TicketOperationError(409, "Ticket has already been claimed")
 
     if action not in _available_actions(
         ticket,
@@ -1096,7 +1144,6 @@ def execute_ticket_action(
             raise TicketOperationError(403, "Current role cannot claim this pool")
         ticket.assigned_to = actor.display_name
         ticket.assigned_to_user_id = actor.user_id
-        ticket.current_pool_code = None
         ticket.responsibility_level = _default_responsibility_level(actor)
         ticket.sub_status = TicketSubStatus.NONE.value
         ticket.updated_at = now
@@ -1113,7 +1160,7 @@ def execute_ticket_action(
         _assert_internal_actor(actor)
         ticket.assigned_to = None
         ticket.assigned_to_user_id = None
-        ticket.current_pool_code = f"{ticket.responsibility_level}_POOL"
+        ticket.current_pool_code = ticket.current_pool_code or _level_to_pool_code(ticket.responsibility_level)
         ticket.sub_status = TicketSubStatus.NONE.value
         ticket.updated_at = now
         _record_action(
@@ -1173,7 +1220,6 @@ def assign_ticket(
     now = utcnow()
     ticket.assigned_to = target_user.display_name
     ticket.assigned_to_user_id = target_user.id
-    ticket.current_pool_code = None
     ticket.responsibility_level = highest_role
     ticket.sub_status = TicketSubStatus.NONE.value
     ticket.updated_at = now
@@ -1209,8 +1255,8 @@ def assign_ticket(
 def _assert_can_initiate_escalation(actor: ActorContext, ticket: Ticket) -> None:
     _assert_internal_actor(actor)
     _assert_valid_ownership_state(ticket)
-    if ticket.current_pool_code:
-        if not _actor_can_claim_pool(actor, ticket.current_pool_code):
+    if ticket.assigned_to_user_id is None:
+        if not ticket.current_pool_code or not _actor_can_claim_pool(actor, ticket.current_pool_code):
             raise TicketOperationError(403, "Current role cannot operate on this pool")
         return
     if ticket.assigned_to_user_id != actor.user_id:
@@ -1359,7 +1405,7 @@ def accept_ticket_escalation(
     now = utcnow()
     ticket.assigned_to = actor.display_name
     ticket.assigned_to_user_id = actor.user_id
-    ticket.current_pool_code = None
+    ticket.current_pool_code = escalation.source_pool_code or ticket.current_pool_code
     ticket.responsibility_level = escalation.target_level
     ticket.sub_status = TicketSubStatus.ESCALATION_CONFIRMED.value
     ticket.updated_at = now

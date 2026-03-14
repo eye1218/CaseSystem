@@ -48,8 +48,8 @@ export default function TicketOwnershipActionPanel({
   const description =
     mode === "assign"
       ? language === "zh"
-        ? "该操作会立即生效，工单会脱离池子并直接归属目标用户。"
-        : "This takes effect immediately and moves the ticket directly to the selected user."
+        ? "该操作会立即生效，工单会保留当前工单池，并直接归属目标用户。"
+        : "This takes effect immediately, keeps the current pool, and assigns the ticket to the selected user."
       : mode === "escalate_user"
         ? language === "zh"
           ? "该操作会向目标用户发送必须处理的通知，等待对方接受或拒绝。"

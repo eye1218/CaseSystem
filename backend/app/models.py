@@ -317,3 +317,4 @@ from .modules.events.models import Event, EventBinding, EventRule, EventRuleBind
 from .modules.knowledge.models import KnowledgeArticle, KnowledgeArticleLike
 from .modules.realtime.models import UserNotification
 from .modules.tasks.models import TaskExecutionLog, TaskInstance, TaskTemplate
+from .modules.mail_senders.models import MailSenderAuditLog, MailSenderConfig

@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate } from "react-router-dom";
+import { Navigate, createBrowserRouter } from "react-router-dom";
 
 import MainLayout from "../components/MainLayout";
 import RequireAdminRoute from "../components/RequireAdminRoute";
@@ -17,6 +17,7 @@ import KnowledgeListPage from "../pages/KnowledgeListPage";
 import NotificationsPage from "../pages/NotificationsPage";
 import PlaceholderPage from "../pages/PlaceholderPage";
 import ConfigurationPage from "../pages/ConfigurationPage";
+import MailSendersPage from "../pages/MailSendersPage";
 import ReportTemplatesPage from "../pages/ReportTemplatesPage";
 import ReportsPage from "../pages/ReportsPage";
 import TasksPage from "../pages/TasksPage";
@@ -34,7 +35,11 @@ export const router = createBrowserRouter([
     children: [
       {
         index: true,
-        element: <Navigate to="/tickets" replace />
+        element: (
+          <RequireInternalRoute>
+            <TicketListPage assignedToMeOnly />
+          </RequireInternalRoute>
+        )
       },
       {
         path: "tickets",
@@ -50,7 +55,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "ticket-pool",
-        element: <PlaceholderPage titleKey="nav.ticketPool" description="工单池工作台待接入后端。" />
+        element: <Navigate to="/tickets" replace />
       },
       {
         path: "sla-monitor",
@@ -157,6 +162,14 @@ export const router = createBrowserRouter([
         element: (
           <RequireAdminRoute>
             <TaskTemplatesPage />
+          </RequireAdminRoute>
+        )
+      },
+      {
+        path: "configuration/mail-senders",
+        element: (
+          <RequireAdminRoute>
+            <MailSendersPage />
           </RequireAdminRoute>
         )
       },

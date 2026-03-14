@@ -241,7 +241,7 @@ def test_t1_user_can_claim_t1_pool_ticket(client, db_session_factory):
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["ticket"]["assigned_to_user_id"] == "user-analyst"
-    assert payload["ticket"]["current_pool_code"] is None
+    assert payload["ticket"]["current_pool_code"] == "T1_POOL"
 
 
 def test_t2_user_can_claim_t1_and_t2_pool_tickets(client, db_session_factory):
@@ -417,7 +417,7 @@ def test_admin_can_assign_ticket_to_specific_user(client, db_session_factory):
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["ticket"]["assigned_to_user_id"] == "user-analyst"
-    assert payload["ticket"]["current_pool_code"] is None
+    assert payload["ticket"]["current_pool_code"] == "T2_POOL"
 
 
 def test_admin_can_reassign_personally_owned_ticket(client, db_session_factory):
@@ -702,7 +702,7 @@ def test_target_user_accepts_directed_escalation_from_pool(client, db_session_fa
     )
     assert accepted.status_code == 200, accepted.text
     payload = accepted.json()
-    assert payload["ticket"]["current_pool_code"] is None
+    assert payload["ticket"]["current_pool_code"] == "T1_POOL"
     assert payload["ticket"]["assigned_to_user_id"] == "user-admin"
     assert payload["ticket"]["sub_status"] == "ESCALATION_CONFIRMED"
 
@@ -900,7 +900,7 @@ def test_dirty_ownership_state_rejects_flow_operation(client, db_session_factory
         ticket_id=200181,
         pool_code="T2_POOL",
         assigned_to_user_id="user-admin",
-        assigned_to="Admin",
+        assigned_to=None,
         responsibility_level="T2",
     )
 

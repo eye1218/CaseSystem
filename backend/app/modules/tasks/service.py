@@ -15,6 +15,7 @@ from ...config import Settings
 from ...enums import RoleCode
 from ...models import User, UserRole
 from ...security import utcnow
+from ..mail_senders.models import MailSenderConfig
 from ..templates.models import Template
 from ..templates.service import TemplateOperationError, render_template
 from ..tickets.models import Ticket
@@ -44,6 +45,8 @@ SUPPORTED_ROLE_TARGETS = {
     RoleCode.T3.value,
 }
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+MAIL_SENDER_STATUS_ENABLED = "ENABLED"
+_UNSET = object()
 
 
 class TaskOperationError(Exception):
@@ -173,9 +176,64 @@ def _normalize_recipient_config(
     return {"to": to_rows, "cc": cc_rows, "bcc": bcc_rows}
 
 
-def _normalize_target_config(task_type: str, raw_config: dict[str, Any]) -> dict[str, object]:
+def _extract_sender_config_id(payload: dict[str, Any] | None) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    raw_sender_id = payload.get("sender_config_id")
+    if isinstance(raw_sender_id, str):
+        sender_id = raw_sender_id.strip()
+        if sender_id:
+            return sender_id
+    target_config = payload.get("target_config")
+    if isinstance(target_config, dict):
+        nested_sender_id = target_config.get("sender_config_id")
+        if isinstance(nested_sender_id, str):
+            sender_id = nested_sender_id.strip()
+            if sender_id:
+                return sender_id
+    return None
+
+
+def _validate_sender_config_id(
+    db: Session,
+    *,
+    sender_config_id: str | None,
+) -> str | None:
+    if sender_config_id is None:
+        return None
+    normalized = sender_config_id.strip()
+    if not normalized:
+        return None
+    sender = db.scalar(select(MailSenderConfig).where(MailSenderConfig.id == normalized))
+    if sender is None:
+        raise _validation_error({"sender_config_id": "Mail sender configuration does not exist"})
+    if sender.status != MAIL_SENDER_STATUS_ENABLED:
+        raise _validation_error({"sender_config_id": "Mail sender configuration must be enabled"})
+    return normalized
+
+
+def _normalize_target_config(
+    db: Session,
+    task_type: str,
+    raw_config: dict[str, Any],
+    *,
+    sender_config_id: str | None = None,
+) -> dict[str, object]:
     if task_type == TASK_TYPE_EMAIL:
+        resolved_sender_config_id = sender_config_id
+        if resolved_sender_config_id is None:
+            resolved_sender_config_id = _extract_sender_config_id(raw_config)
+        normalized_sender_id = _validate_sender_config_id(
+            db, sender_config_id=resolved_sender_config_id
+        )
+        if normalized_sender_id:
+            return {"sender_config_id": normalized_sender_id}
         return {}
+
+    if sender_config_id and sender_config_id.strip():
+        raise _validation_error(
+            {"sender_config_id": "Only EMAIL task templates can bind mail sender configuration"}
+        )
 
     forbidden = {"url", "method", "headers", "body"} & set(raw_config.keys())
     if forbidden:
@@ -195,6 +253,7 @@ def _serialize_task_template(task_template: TaskTemplate) -> dict[str, object]:
         "name": task_template.name,
         "task_type": task_template.task_type,
         "reference_template_id": task_template.reference_template_id,
+        "sender_config_id": _extract_sender_config_id(task_template.target_config),
         "status": task_template.status,
         "recipient_config": task_template.recipient_config,
         "target_config": task_template.target_config,
@@ -212,6 +271,7 @@ def _task_template_snapshot(task_template: TaskTemplate | None, *, task_template
             "task_type": TASK_TYPE_UNKNOWN,
             "status": "MISSING",
             "reference_template_id": None,
+            "sender_config_id": None,
             "recipient_config": {"to": [], "cc": [], "bcc": []},
             "target_config": {},
             "description": "Task template is missing",
@@ -222,6 +282,7 @@ def _task_template_snapshot(task_template: TaskTemplate | None, *, task_template
         "task_type": task_template.task_type,
         "status": task_template.status,
         "reference_template_id": task_template.reference_template_id,
+        "sender_config_id": _extract_sender_config_id(task_template.target_config),
         "recipient_config": task_template.recipient_config,
         "target_config": task_template.target_config,
         "description": task_template.description,
@@ -326,6 +387,7 @@ def create_task_template(
     name: str,
     task_type: str,
     reference_template_id: str,
+    sender_config_id: str | None = None,
     status: str,
     recipient_config: dict[str, Any],
     target_config: dict[str, Any],
@@ -344,7 +406,12 @@ def create_task_template(
         recipient_config=_normalize_recipient_config(
             normalized_task_type, recipient_config
         ),
-        target_config=_normalize_target_config(normalized_task_type, target_config),
+        target_config=_normalize_target_config(
+            db,
+            normalized_task_type,
+            target_config,
+            sender_config_id=sender_config_id,
+        ),
         description=description.strip() or None if description else None,
         created_by_user_id=actor.user_id,
         created_by_name=actor.display_name,
@@ -373,6 +440,7 @@ def update_task_template(
     task_template_id: str,
     name: str | None = None,
     reference_template_id: str | None = None,
+    sender_config_id: str | None | object = _UNSET,
     recipient_config: dict[str, Any] | None = None,
     target_config: dict[str, Any] | None = None,
     description: str | None = None,
@@ -393,10 +461,24 @@ def update_task_template(
             task_template.task_type,
             recipient_config,
         )
-    if target_config is not None:
+    if target_config is not None or sender_config_id is not _UNSET:
+        normalized_sender_config_id = (
+            sender_config_id
+            if sender_config_id is not _UNSET
+            else _extract_sender_config_id(task_template.target_config)
+        )
+        base_target_config = (
+            target_config if target_config is not None else dict(task_template.target_config or {})
+        )
         task_template.target_config = _normalize_target_config(
+            db,
             task_template.task_type,
-            target_config,
+            base_target_config,
+            sender_config_id=(
+                None
+                if normalized_sender_config_id in (None, "")
+                else str(normalized_sender_config_id)
+            ),
         )
     if description is not None:
         task_template.description = description.strip() or None
@@ -559,11 +641,25 @@ def _resolve_recipients(
     }
 
 
+def _resolve_task_sender(
+    db: Session,
+    *,
+    sender_config_id: str,
+) -> MailSenderConfig:
+    sender = db.scalar(select(MailSenderConfig).where(MailSenderConfig.id == sender_config_id))
+    if sender is None:
+        raise TaskOperationError(409, "Mail sender not found")
+    if sender.status != MAIL_SENDER_STATUS_ENABLED:
+        raise TaskOperationError(409, "Mail sender is disabled")
+    return sender
+
+
 def deliver_email(
     *,
     recipients: dict[str, list[str]],
     rendered: dict[str, Any],
     settings: Settings,
+    mail_sender: MailSenderConfig | None = None,
 ) -> dict[str, object]:
     all_recipients = _unique_non_empty(
         [*recipients.get("to", []), *recipients.get("cc", []), *recipients.get("bcc", [])]
@@ -571,7 +667,23 @@ def deliver_email(
     if not all_recipients:
         raise TaskOperationError(422, "Email recipients resolved to an empty set")
 
-    if not settings.smtp_host:
+    smtp_host = mail_sender.smtp_host if mail_sender else settings.smtp_host
+    smtp_port = mail_sender.smtp_port if mail_sender else settings.smtp_port
+    smtp_username = mail_sender.auth_account if mail_sender else settings.smtp_username
+    smtp_password = mail_sender.auth_password if mail_sender else settings.smtp_password
+    smtp_use_ssl = (
+        mail_sender.security_type in {"SSL", "TLS"} if mail_sender else settings.smtp_use_ssl
+    )
+    smtp_starttls = (
+        mail_sender.security_type == "STARTTLS" if mail_sender else settings.smtp_starttls
+    )
+    from_email = (
+        f"{mail_sender.sender_name} <{mail_sender.sender_email}>"
+        if mail_sender
+        else settings.smtp_from_email
+    )
+
+    if not smtp_host:
         return {
             "provider": "stub-smtp",
             "accepted": len(all_recipients),
@@ -580,7 +692,7 @@ def deliver_email(
 
     message = EmailMessage()
     message["Subject"] = str(rendered.get("subject") or "")
-    message["From"] = settings.smtp_from_email
+    message["From"] = from_email
     if recipients.get("to"):
         message["To"] = ", ".join(recipients["to"])
     if recipients.get("cc"):
@@ -589,28 +701,29 @@ def deliver_email(
         message["Bcc"] = ", ".join(recipients["bcc"])
     message.set_content(str(rendered.get("body") or ""))
 
-    if settings.smtp_use_ssl:
+    if smtp_use_ssl:
         smtp_client = smtplib.SMTP_SSL(
-            settings.smtp_host,
-            settings.smtp_port,
+            smtp_host,
+            smtp_port,
             timeout=settings.smtp_timeout_seconds,
         )
     else:
         smtp_client = smtplib.SMTP(
-            settings.smtp_host,
-            settings.smtp_port,
+            smtp_host,
+            smtp_port,
             timeout=settings.smtp_timeout_seconds,
         )
     with smtp_client as smtp:
-        if not settings.smtp_use_ssl and settings.smtp_starttls:
+        if not smtp_use_ssl and smtp_starttls:
             smtp.starttls()
-        if settings.smtp_username:
-            smtp.login(settings.smtp_username, settings.smtp_password or "")
+        if smtp_username:
+            smtp.login(smtp_username, smtp_password or "")
         smtp.send_message(message)
     return {
         "provider": "smtp",
         "accepted": len(all_recipients),
         "subject": rendered.get("subject"),
+        "sender_config_id": mail_sender.id if mail_sender else None,
     }
 
 
@@ -783,15 +896,34 @@ def execute_task_instance(
                     message="Email recipients resolved to an empty set",
                     rendered_summary=rendered,
                 )
+            sender_config_id = _extract_sender_config_id(task_template.target_config) or _extract_sender_config_id(
+                instance.template_snapshot
+            )
+            mail_sender: MailSenderConfig | None = None
+            if sender_config_id:
+                try:
+                    mail_sender = _resolve_task_sender(
+                        db, sender_config_id=sender_config_id
+                    )
+                except TaskOperationError as exc:
+                    detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+                    return _fail_task_instance(
+                        db,
+                        instance,
+                        message=detail,
+                        rendered_summary=rendered,
+                    )
             delivery_result = deliver_email(
                 recipients=recipients,
                 rendered=rendered,
                 settings=settings,
+                mail_sender=mail_sender,
             )
             latest_result = {
                 "recipients": recipients,
                 "rendered": rendered,
                 "response": delivery_result,
+                "sender_config_id": sender_config_id,
             }
             target_summary = ", ".join(recipients["to"])
         elif task_template.task_type == TASK_TYPE_WEBHOOK:

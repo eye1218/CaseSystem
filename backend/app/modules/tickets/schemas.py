@@ -40,6 +40,9 @@ class TicketSummaryResponse(BaseModel):
 class TicketListResponse(BaseModel):
     items: list[TicketSummaryResponse]
     total_count: int
+    filtered_count: int
+    has_more: bool
+    next_offset: int | None
 
 
 class LocalizedTextResponse(BaseModel):

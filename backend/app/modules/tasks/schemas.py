@@ -21,6 +21,7 @@ class TaskTemplateCreateRequest(BaseModel):
     name: str
     task_type: str
     reference_template_id: str
+    sender_config_id: str | None = None
     status: str = "ACTIVE"
     recipient_config: TaskRecipientConfigRequest = Field(default_factory=TaskRecipientConfigRequest)
     target_config: dict[str, Any] = Field(default_factory=dict)
@@ -30,6 +31,7 @@ class TaskTemplateCreateRequest(BaseModel):
 class TaskTemplateUpdateRequest(BaseModel):
     name: str | None = None
     reference_template_id: str | None = None
+    sender_config_id: str | None = None
     recipient_config: TaskRecipientConfigRequest | None = None
     target_config: dict[str, Any] | None = None
     description: str | None = None
@@ -57,6 +59,7 @@ class TaskTemplateSummaryResponse(BaseModel):
     name: str
     task_type: str
     reference_template_id: str
+    sender_config_id: str | None = None
     status: str
     recipient_config: TaskRecipientConfigResponse
     target_config: dict[str, Any]

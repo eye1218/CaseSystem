@@ -4,7 +4,6 @@ import {
   BookOpen,
   FileCheck,
   FileText,
-  Inbox,
   LayoutDashboard,
   ListTodo,
   Radio,
@@ -16,7 +15,8 @@ import {
   Users
 } from "lucide-react";
 
-import { hasMenuAccess, useAuth } from "../contexts/AuthContext";
+import { useAuth } from "../contexts/AuthContext";
+import { hasMenuAccess } from "../features/auth/utils";
 import { useLanguage } from "../contexts/LanguageContext";
 import { useRealtime } from "../contexts/RealtimeContext";
 import { useTheme } from "../contexts/ThemeContext";
@@ -26,7 +26,6 @@ import logoLight from "../styles/logo-light.svg";
 const menuItems = [
   { id: "dashboard", icon: LayoutDashboard, label: "nav.dashboard", path: "/" },
   { id: "tickets", icon: Ticket, label: "nav.tickets", path: "/tickets" },
-  { id: "ticketPool", icon: Inbox, label: "nav.ticketPool", path: "/ticket-pool" },
   { id: "slaMonitor", icon: Clock, label: "nav.slaMonitor", path: "/sla-monitor" },
   { id: "notifications", icon: Bell, label: "nav.notifications", path: "/notifications" },
   { id: "knowledge", icon: BookOpen, label: "nav.knowledge", path: "/knowledge" },

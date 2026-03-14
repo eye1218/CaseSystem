@@ -10,7 +10,7 @@ interface AuthContextValue {
   user: AuthenticatedUser | null;
   isAuthenticated: boolean;
   authReady: boolean;
-  login: (username: string, password: string) => Promise<boolean>;
+  login: (username: string, password: string) => Promise<AuthenticatedUser | null>;
   logout: () => Promise<void>;
   switchRole: (role: RoleCode) => Promise<void>;
   refreshUser: () => Promise<void>;
@@ -56,11 +56,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const response = await authApi.login(username, password);
           setUser(response.user);
           window.localStorage.setItem(SESSION_HINT_KEY, "1");
-          return true;
+          return response.user;
         } catch {
           setUser(null);
           window.localStorage.removeItem(SESSION_HINT_KEY);
-          return false;
+          return null;
         }
       },
       logout: async () => {
@@ -89,16 +89,4 @@ export function useAuth() {
     throw new Error("useAuth must be used within AuthProvider");
   }
   return context;
-}
-
-export function hasMenuAccess(role: RoleCode, menuItem: string): boolean {
-  const accessMatrix: Record<RoleCode, string[]> = {
-    T1: ["tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "tasks", "reports"],
-    T2: ["tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "tasks", "reports", "kpi"],
-    T3: ["tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "tasks", "reports", "kpi"],
-    ADMIN: ["dashboard", "tickets", "ticketPool", "slaMonitor", "notifications", "knowledge", "events", "tasks", "reports", "kpi", "configuration", "users", "audit", "recycle"],
-    CUSTOMER: ["tickets", "reports", "notifications"]
-  };
-
-  return accessMatrix[role]?.includes(menuItem) ?? false;
 }

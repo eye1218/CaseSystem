@@ -10,7 +10,6 @@ import type { RoleCode } from "../types/auth";
 
 const routeTitleMap: Record<string, string> = {
   "/tickets": "nav.tickets",
-  "/ticket-pool": "nav.ticketPool",
   "/sla-monitor": "nav.slaMonitor",
   "/notifications": "nav.notifications",
   "/knowledge": "nav.knowledge",

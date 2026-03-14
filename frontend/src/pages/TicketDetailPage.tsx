@@ -1,5 +1,4 @@
 import {
-  AlertTriangle,
   ArrowUpRight,
   ArrowLeft,
   CheckCircle2,
@@ -618,7 +617,6 @@ export default function TicketDetailPage() {
 
   const localizedContext = detail.siem_context_markdown[language];
   const summaryText = detail.responsibility_summary[language];
-  const contextSummary = detail.external_context.summary[language];
   const availableActions = actionOrder.filter((action) => detail.available_actions.includes(action));
 
   return (
@@ -1044,58 +1042,22 @@ export default function TicketDetailPage() {
             }}
           />
 
-          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="mb-3 flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-blue-500" />
-              <h2 className="text-sm font-semibold text-slate-900 dark:text-white">{language === "zh" ? "外部上下文摘要" : "External Context"}</h2>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <InfoCard label="Source" value={detail.external_context.source} />
-              <InfoCard label="Rule" value={detail.external_context.rule_name} />
-              <InfoCard label="Severity" value={detail.external_context.severity} />
-              <InfoCard label="Asset" value={detail.external_context.asset} />
-              <div className="col-span-2">
-                <InfoCard label="Indicator" value={detail.external_context.indicator} />
-              </div>
-            </div>
-            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300">
-              {contextSummary}
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="mb-3 flex items-center gap-2">
-              <ShieldAlert className="h-4 w-4 text-blue-500" />
-              <h2 className="text-sm font-semibold text-slate-900 dark:text-white">{language === "zh" ? "权限与范围" : "Permissions"}</h2>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <InfoCard label={language === "zh" ? "当前角色" : "Current Role"} value={detail.permission_scope.current_role} />
-              <InfoCard label={language === "zh" ? "页面范围" : "Page Scope"} value={detail.permission_scope.page_scope} />
-              <div className="col-span-2">
-                <InfoCard label={language === "zh" ? "评论范围" : "Comment Scope"} value={detail.permission_scope.comment_scope} />
-              </div>
-              <div className="col-span-2">
-                <InfoCard
-                  label={language === "zh" ? "隐藏字段" : "Hidden Fields"}
-                  value={detail.permission_scope.hidden_fields.length ? detail.permission_scope.hidden_fields.join(" / ") : language === "zh" ? "无" : "None"}
-                />
-              </div>
-            </div>
-          </div>
         </aside>
 
-        <KnowledgeDrawer
-          article={knowledgeDrawerArticle}
-          open={knowledgeDrawerOpen}
-          onClose={() => {
-            setKnowledgeDrawerOpen(false);
-            setKnowledgeDrawerLoading(false);
-            setKnowledgeDrawerError("");
-          }}
-          language={language}
-          loading={knowledgeDrawerLoading}
-          errorMessage={knowledgeDrawerError}
-        />
+        <div className="sticky top-6 self-start">
+          <KnowledgeDrawer
+            article={knowledgeDrawerArticle}
+            open={knowledgeDrawerOpen}
+            onClose={() => {
+              setKnowledgeDrawerOpen(false);
+              setKnowledgeDrawerLoading(false);
+              setKnowledgeDrawerError("");
+            }}
+            language={language}
+            loading={knowledgeDrawerLoading}
+            errorMessage={knowledgeDrawerError}
+          />
+        </div>
       </div>
 
       {error && (

@@ -1,4 +1,5 @@
 import { apiFetch, apiPatch, apiPost } from "./client";
+import { buildTicketListPath, type TicketQueryParams } from "../features/tickets/utils";
 import type {
   InternalTicketUserListResponse,
   TicketAssignPayload,
@@ -15,34 +16,13 @@ import type {
   TicketUpdatePayload
 } from "../types/ticket";
 
-export interface TicketQuery {
-  ticketId?: string;
-  category?: string;
-  priority?: string;
-  mainStatus?: string;
-  subStatus?: string;
-  createdFrom?: string;
-  createdTo?: string;
-  sortBy?: string;
-  sortDir?: "asc" | "desc";
-}
+export type TicketQuery = TicketQueryParams;
 
 export async function listTickets(query: TicketQuery): Promise<TicketListResponse> {
-  const params = new URLSearchParams();
-
-  if (query.ticketId) params.set("ticket_id", query.ticketId);
-  if (query.category && query.category !== "all") params.set("category_id", query.category);
-  if (query.priority && query.priority !== "all") params.set("priority", query.priority);
-  if (query.mainStatus && query.mainStatus !== "all") params.set("main_status", query.mainStatus);
-  if (query.subStatus && query.subStatus !== "all") params.set("sub_status", query.subStatus);
-  if (query.createdFrom) params.set("created_from", query.createdFrom);
-  if (query.createdTo) params.set("created_to", query.createdTo);
-  if (query.sortBy) params.set("sort_by", query.sortBy);
-  if (query.sortDir) params.set("sort_dir", query.sortDir);
-
-  const suffix = params.toString() ? `?${params.toString()}` : "";
-  return apiFetch<TicketListResponse>(`/api/v1/tickets${suffix}`);
+  return apiFetch<TicketListResponse>(buildTicketListPath(query));
 }
+
+export { buildTicketListPath };
 
 export function createTicket(payload: TicketCreatePayload) {
   return apiPost<TicketDetail>("/api/v1/tickets", payload);

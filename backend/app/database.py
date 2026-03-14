@@ -28,18 +28,45 @@ SessionLocal = sessionmaker(
 def _ensure_runtime_schema() -> None:
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
-    if "tickets" not in table_names:
-        return
+    if "tickets" in table_names:
+        ticket_columns = {column["name"] for column in inspector.get_columns("tickets")}
+        if "version" not in ticket_columns:
+            logger.info(
+                "Adding missing tickets.version column for runtime schema compatibility"
+            )
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    "ALTER TABLE tickets ADD COLUMN version INTEGER NOT NULL DEFAULT 1"
+                )
 
-    columns = {column["name"] for column in inspector.get_columns("tickets")}
-    if "version" in columns:
-        return
-
-    logger.info("Adding missing tickets.version column for runtime schema compatibility")
-    with engine.begin() as connection:
-        connection.exec_driver_sql(
-            "ALTER TABLE tickets ADD COLUMN version INTEGER NOT NULL DEFAULT 1"
-        )
+    if "user_notifications" in table_names:
+        notification_columns = {
+            column["name"] for column in inspector.get_columns("user_notifications")
+        }
+        statements: list[str] = []
+        if "action_required" not in notification_columns:
+            statements.append(
+                "ALTER TABLE user_notifications ADD COLUMN action_required BOOLEAN NOT NULL DEFAULT 0"
+            )
+        if "action_type" not in notification_columns:
+            statements.append(
+                "ALTER TABLE user_notifications ADD COLUMN action_type VARCHAR(64)"
+            )
+        if "action_status" not in notification_columns:
+            statements.append(
+                "ALTER TABLE user_notifications ADD COLUMN action_status VARCHAR(16)"
+            )
+        if "action_payload" not in notification_columns:
+            statements.append(
+                "ALTER TABLE user_notifications ADD COLUMN action_payload JSON NOT NULL DEFAULT '{}'"
+            )
+        if statements:
+            logger.info(
+                "Adding missing user_notifications action columns for runtime schema compatibility"
+            )
+            with engine.begin() as connection:
+                for statement in statements:
+                    connection.exec_driver_sql(statement)
 
 
 def init_db() -> None:

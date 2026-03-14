@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { createReport, deleteReport, listReports, replaceReportFile, updateReport } from "../api/reports";
 import { getTicketDetail } from "../api/tickets";
@@ -101,6 +101,8 @@ export default function ReportsPage() {
   const { language } = useLanguage();
   const zh = language === "zh";
   const canManageReports = user?.active_role !== "CUSTOMER";
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedReportId = searchParams.get("reportId");
 
   const [items, setItems] = useState<ReportSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -152,7 +154,7 @@ export default function ReportsPage() {
       });
       setItems(payload.items);
       setSelectedId((current) => {
-        const target = preferredSelectedId ?? current;
+        const target = preferredSelectedId ?? requestedReportId ?? current;
         if (target && payload.items.some((item) => item.id === target)) {
           return target;
         }
@@ -168,8 +170,29 @@ export default function ReportsPage() {
   }
 
   useEffect(() => {
-    void loadReports(defaultFilters);
+    void loadReports(defaultFilters, requestedReportId);
   }, []);
+
+  useEffect(() => {
+    if (!items.length || !requestedReportId) {
+      return;
+    }
+    if (items.some((item) => item.id === requestedReportId)) {
+      setSelectedId(requestedReportId);
+    }
+  }, [items, requestedReportId]);
+
+  useEffect(() => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (selectedId) {
+      nextParams.set("reportId", selectedId);
+    } else {
+      nextParams.delete("reportId");
+    }
+    if (nextParams.toString() !== searchParams.toString()) {
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [selectedId, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (!selectedReport) {

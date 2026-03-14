@@ -83,6 +83,9 @@ rsync -az --delete \
   --exclude '.npm-cache' \
   --exclude '.runtime' \
   --exclude 'backend/.runtime' \
+  --exclude '*.db' \
+  --exclude '*.db-wal' \
+  --exclude '*.db-shm' \
   --exclude 'frontend/node_modules' \
   --exclude '__pycache__' \
   --exclude '.pytest_cache' \

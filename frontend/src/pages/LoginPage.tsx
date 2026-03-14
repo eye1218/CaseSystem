@@ -4,6 +4,7 @@ import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { useAuth } from "../contexts/AuthContext";
+import { getDefaultRouteForRole } from "../features/auth/utils";
 import { useLanguage } from "../contexts/LanguageContext";
 import { useTheme } from "../contexts/ThemeContext";
 import logoDark from "../styles/logo-dark.svg";
@@ -14,16 +15,16 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const { isAuthenticated, login } = useAuth();
+  const { isAuthenticated, login, user } = useAuth();
   const { language, toggleLanguage, t } = useLanguage();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (isAuthenticated) {
-      navigate("/tickets", { replace: true });
+    if (isAuthenticated && user) {
+      navigate(getDefaultRouteForRole(user.active_role), { replace: true });
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, navigate, user]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -31,12 +32,12 @@ export default function LoginPage() {
     setError("");
 
     try {
-      const success = await login(username, password);
-      if (!success) {
+      const authenticatedUser = await login(username, password);
+      if (!authenticatedUser) {
         setError(t("login.invalid"));
         return;
       }
-      navigate("/tickets", { replace: true });
+      navigate(getDefaultRouteForRole(authenticatedUser.active_role), { replace: true });
     } catch {
       setError(t("login.failed"));
     } finally {

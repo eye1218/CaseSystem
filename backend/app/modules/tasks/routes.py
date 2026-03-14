@@ -70,6 +70,7 @@ def task_template_create(
             name=payload.name,
             task_type=payload.task_type,
             reference_template_id=payload.reference_template_id,
+            sender_config_id=payload.sender_config_id,
             status=payload.status,
             recipient_config=payload.recipient_config.model_dump(),
             target_config=payload.target_config,
@@ -167,16 +168,21 @@ def task_template_update(
     actor: Annotated[ActorContext, Depends(require_auth)],
     db: Annotated[Session, Depends(get_db)],
 ) -> TaskTemplateSummaryResponse:
+    update_kwargs: dict[str, object] = {
+        "name": payload.name,
+        "reference_template_id": payload.reference_template_id,
+        "recipient_config": payload.recipient_config.model_dump() if payload.recipient_config else None,
+        "target_config": payload.target_config,
+        "description": payload.description,
+    }
+    if "sender_config_id" in payload.model_fields_set:
+        update_kwargs["sender_config_id"] = payload.sender_config_id
     try:
         detail = update_task_template(
             db,
             actor,
             task_template_id=task_template_id,
-            name=payload.name,
-            reference_template_id=payload.reference_template_id,
-            recipient_config=payload.recipient_config.model_dump() if payload.recipient_config else None,
-            target_config=payload.target_config,
-            description=payload.description,
+            **update_kwargs,
         )
     except TaskOperationError as exc:
         _raise_as_http(exc)

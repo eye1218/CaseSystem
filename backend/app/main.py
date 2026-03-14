@@ -16,10 +16,12 @@ from .database import SessionLocal, init_db
 from .dependencies import get_auth_service, require_auth, require_csrf
 from .modules.events.routes import event_router
 from .modules.knowledge.routes import knowledge_router
+from .modules.mail_senders.routes import mail_sender_router
 from .modules.realtime.routes import realtime_router
 from .modules.tasks.routes import task_router
 from .modules.realtime.socket_server import configure_realtime_gateway, create_socketio_app
 from .modules.templates.routes import template_router
+from .modules.user_management.routes import user_management_router
 from .modules.tickets.cache import configure_ticket_cache
 from .modules.tickets.routes import ticket_router
 from .policies import ObjectScope, RoleCode
@@ -252,6 +254,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(knowledge_router)
     app.include_router(template_router)
     app.include_router(task_router)
+    app.include_router(mail_sender_router)
+    app.include_router(user_management_router)
     app.include_router(report_router)
 
     if frontend_dist.exists():

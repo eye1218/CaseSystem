@@ -12,6 +12,7 @@ import {
 import { startTransition, useEffect, useMemo, useState } from "react";
 
 import { ApiError } from "../api/client";
+import { listMailSenders } from "../api/mailSenders";
 import { listTemplates } from "../api/templates";
 import {
   createTaskTemplate,
@@ -29,6 +30,7 @@ import {
   taskTypeOptions,
 } from "../constants/tasks";
 import { useLanguage } from "../contexts/LanguageContext";
+import type { MailSenderSummary } from "../types/mailSender";
 import type { TemplateSummary } from "../types/template";
 import type {
   RecipientSourceType,
@@ -50,6 +52,7 @@ interface TaskTemplateFormState {
   name: string;
   task_type: "EMAIL" | "WEBHOOK";
   reference_template_id: string;
+  sender_config_id: string;
   status: TaskTemplateStatus;
   description: string;
   recipient_config: {
@@ -75,6 +78,7 @@ function defaultFormState(): TaskTemplateFormState {
     name: "",
     task_type: "EMAIL",
     reference_template_id: "",
+    sender_config_id: "",
     status: "ACTIVE",
     description: "",
     recipient_config: {
@@ -94,6 +98,7 @@ function fromTaskTemplate(item: TaskTemplateSummary): TaskTemplateFormState {
     name: item.name,
     task_type: item.task_type === "WEBHOOK" ? "WEBHOOK" : "EMAIL",
     reference_template_id: item.reference_template_id,
+    sender_config_id: item.sender_config_id ?? "",
     status: item.status,
     description: item.description ?? "",
     recipient_config: {
@@ -182,6 +187,18 @@ function summaryRecipients(item: TaskTemplateSummary, language: "zh" | "en") {
 function findTemplateName(templates: TemplateSummary[], templateId: string, language: "zh" | "en") {
   const template = templates.find((item) => item.id === templateId);
   return template?.name ?? (language === "zh" ? "引用模板已不存在" : "Missing referenced template");
+}
+
+function findMailSenderName(
+  mailSenders: MailSenderSummary[],
+  senderConfigId: string | null | undefined,
+  language: "zh" | "en",
+) {
+  if (!senderConfigId) {
+    return language === "zh" ? "未指定（使用默认 SMTP）" : "Not bound (default SMTP)";
+  }
+  const sender = mailSenders.find((item) => item.id === senderConfigId);
+  return sender?.sender_name ?? (language === "zh" ? "发送者配置已不存在" : "Missing sender");
 }
 
 function RecipientBucketEditor({
@@ -318,6 +335,7 @@ export default function TaskTemplatesPage() {
 
   const [items, setItems] = useState<TaskTemplateSummary[]>([]);
   const [referenceTemplates, setReferenceTemplates] = useState<TemplateSummary[]>([]);
+  const [mailSenders, setMailSenders] = useState<MailSenderSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -334,13 +352,15 @@ export default function TaskTemplatesPage() {
     setLoading(true);
     setError("");
     try {
-      const [taskTemplateResponse, templateResponse] = await Promise.all([
+      const [taskTemplateResponse, templateResponse, senderResponse] = await Promise.all([
         listTaskTemplates(),
         listTemplates({ status: "ACTIVE", templateType: "all" }),
+        listMailSenders({ status: "ENABLED" }),
       ]);
       startTransition(() => {
         setItems(taskTemplateResponse.items);
         setReferenceTemplates(templateResponse.items);
+        setMailSenders(senderResponse.items);
       });
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load task templates");
@@ -412,6 +432,7 @@ export default function TaskTemplatesPage() {
       const payload = {
         name: form.name.trim(),
         reference_template_id: form.reference_template_id,
+        sender_config_id: form.task_type === "EMAIL" ? form.sender_config_id.trim() || null : null,
         recipient_config: recipientConfig,
         target_config: {},
         description: form.description.trim() || null,
@@ -648,7 +669,15 @@ export default function TaskTemplatesPage() {
                             </div>
                           </td>
                           <td className="max-w-[260px] px-4 py-3 align-top text-xs text-slate-600 dark:text-slate-300">
-                            <div className="line-clamp-2">{summaryRecipients(item, language)}</div>
+                            <div className="space-y-1">
+                              <div className="line-clamp-2">{summaryRecipients(item, language)}</div>
+                              {item.task_type === "EMAIL" ? (
+                                <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                                  {zh ? "发送者：" : "Sender: "}
+                                  {findMailSenderName(mailSenders, item.sender_config_id, language)}
+                                </p>
+                              ) : null}
+                            </div>
                           </td>
                           <td className="px-4 py-3 align-top">
                             <TaskTemplateStatusBadge status={item.status} language={language} />
@@ -760,6 +789,7 @@ export default function TaskTemplatesPage() {
                         ...current,
                         task_type: option.value,
                         reference_template_id: "",
+                        sender_config_id: "",
                         recipient_config:
                           option.value === "EMAIL"
                             ? { to: [createRecipientRule("CUSTOM_EMAIL")], cc: [], bcc: [] }
@@ -802,6 +832,33 @@ export default function TaskTemplatesPage() {
                 <p className="text-[11px] text-red-500">{fieldErrors.reference_template_id}</p>
               ) : null}
             </div>
+
+            {form.task_type === "EMAIL" ? (
+              <div className="space-y-1">
+                <label className="text-[11px] uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  {zh ? "邮箱发送者配置" : "Mail Sender Config"}
+                </label>
+                <select
+                  value={form.sender_config_id}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, sender_config_id: event.target.value }))
+                  }
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none transition focus:ring-2 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                >
+                  <option value="">
+                    {zh ? "不指定（使用默认 SMTP）" : "Not bound (default SMTP)"}
+                  </option>
+                  {mailSenders.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.sender_name} · {item.sender_email}
+                    </option>
+                  ))}
+                </select>
+                {fieldErrors.sender_config_id ? (
+                  <p className="text-[11px] text-red-500">{fieldErrors.sender_config_id}</p>
+                ) : null}
+              </div>
+            ) : null}
 
             <div className="space-y-1">
               <label className="text-[11px] uppercase tracking-wider text-slate-400 dark:text-slate-500">

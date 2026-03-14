@@ -4,6 +4,7 @@ import {
   FileCog,
   FileCode,
   Lock,
+  Mail,
   Settings
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -56,6 +57,17 @@ const SUB_MODULES: SubModule[] = [
     path: "/configuration/task-templates",
     icon: <Bell className="h-5 w-5 text-blue-500" />,
     tags: ["Event", "Email", "Webhook"],
+    adminOnly: true
+  },
+  {
+    id: "mail-senders",
+    titleZh: "邮箱发送者配置",
+    titleEn: "Mail Sender Config",
+    descZh: "维护独立 SMTP 发送者配置，支持启停和测试发送，并供邮件任务模板引用。",
+    descEn: "Manage independent SMTP sender configurations with status control and test-send for email task templates.",
+    path: "/configuration/mail-senders",
+    icon: <Mail className="h-5 w-5 text-blue-500" />,
+    tags: ["SMTP", "Email", "Sender"],
     adminOnly: true
   }
 ];

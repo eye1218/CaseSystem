@@ -131,8 +131,8 @@ def _normalize_recipient_rows(
             field_errors[f"{field_name}[{index}].source_type"] = "Unsupported recipient source"
             continue
         if source_type == "CUSTOM_EMAIL":
-            if not value or EMAIL_PATTERN.match(value) is None:
-                field_errors[f"{field_name}[{index}].value"] = "A valid email address is required"
+            if not value:
+                field_errors[f"{field_name}[{index}].value"] = "A recipient value is required"
                 continue
         elif source_type == "ROLE_MEMBERS":
             if value not in SUPPORTED_ROLE_TARGETS:
@@ -590,55 +590,250 @@ def _unique_non_empty(values: Iterable[str]) -> list[str]:
     return items
 
 
-def _resolve_user_emails_by_role(db: Session, role_code: str) -> list[str]:
+def _deduplicate_resolution_entries(
+    entries: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    deduplicated: list[dict[str, object]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    for entry in entries:
+        signature = tuple(
+            sorted(
+                (key, str(value))
+                for key, value in entry.items()
+                if value not in (None, "", [], {})
+            )
+        )
+        if signature in seen:
+            continue
+        seen.add(signature)
+        deduplicated.append(entry)
+    return deduplicated
+
+
+def _resolve_role_member_targets(
+    db: Session, role_code: str
+) -> dict[str, list[dict[str, object]] | list[str]]:
     rows = db.execute(
-        select(User.email)
+        select(User.id, User.username, User.display_name, User.email)
         .join(UserRole, UserRole.user_id == User.id)
         .where(
             UserRole.role_code == role_code,
             UserRole.is_active.is_(True),
             User.status == "active",
-            User.email.is_not(None),
         )
     ).all()
-    return _unique_non_empty(email for (email,) in rows if isinstance(email, str))
+    emails: list[str] = []
+    resolved_entries: list[dict[str, object]] = []
+    ignored_entries: list[dict[str, object]] = []
+    invalid_entries: list[dict[str, object]] = []
+    for user_id, username, display_name, email in rows:
+        base_entry = {
+            "source_type": "ROLE_MEMBERS",
+            "role_code": role_code,
+            "user_id": str(user_id),
+            "username": str(username),
+            "display_name": str(display_name),
+        }
+        normalized_email = str(email).strip() if isinstance(email, str) else ""
+        if not normalized_email:
+            ignored_entries.append(
+                {
+                    **base_entry,
+                    "reason": "missing_email",
+                }
+            )
+            continue
+        if EMAIL_PATTERN.match(normalized_email) is None:
+            invalid_entries.append(
+                {
+                    **base_entry,
+                    "email": normalized_email,
+                    "reason": "invalid_email",
+                }
+            )
+            continue
+        emails.append(normalized_email)
+        resolved_entries.append(
+            {
+                **base_entry,
+                "email": normalized_email,
+            }
+        )
+    return {
+        "emails": _unique_non_empty(emails),
+        "resolved_entries": _deduplicate_resolution_entries(resolved_entries),
+        "ignored_entries": _deduplicate_resolution_entries(ignored_entries),
+        "invalid_entries": _deduplicate_resolution_entries(invalid_entries),
+    }
 
 
 def _resolve_recipient_bucket(
     db: Session,
     ticket: Ticket,
     rows: list[dict[str, Any]],
-) -> list[str]:
+) -> dict[str, object]:
     emails: list[str] = []
+    resolved_entries: list[dict[str, object]] = []
+    ignored_entries: list[dict[str, object]] = []
+    invalid_entries: list[dict[str, object]] = []
     for row in rows:
         source_type = str(row.get("source_type") or "").strip().upper()
         value = str(row.get("value") or "").strip()
         if source_type == "CUSTOM_EMAIL" and value:
-            emails.append(value)
+            if EMAIL_PATTERN.match(value) is None:
+                invalid_entries.append(
+                    {
+                        "source_type": "CUSTOM_EMAIL",
+                        "value": value,
+                        "reason": "invalid_email",
+                    }
+                )
+            else:
+                emails.append(value)
+                resolved_entries.append(
+                    {
+                        "source_type": "CUSTOM_EMAIL",
+                        "email": value,
+                    }
+                )
         elif source_type == "CURRENT_HANDLER" and ticket.assigned_to_user_id:
             user = db.scalar(
                 select(User).where(
                     User.id == ticket.assigned_to_user_id,
                     User.status == "active",
-                    User.email.is_not(None),
                 )
             )
-            if user and user.email:
-                emails.append(user.email)
+            if user is None:
+                ignored_entries.append(
+                    {
+                        "source_type": "CURRENT_HANDLER",
+                        "user_id": ticket.assigned_to_user_id,
+                        "reason": "user_not_found",
+                    }
+                )
+            else:
+                normalized_email = user.email.strip() if isinstance(user.email, str) else ""
+                base_entry = {
+                    "source_type": "CURRENT_HANDLER",
+                    "user_id": user.id,
+                    "username": user.username,
+                    "display_name": user.display_name,
+                }
+                if not normalized_email:
+                    ignored_entries.append(
+                        {
+                            **base_entry,
+                            "reason": "missing_email",
+                        }
+                    )
+                elif EMAIL_PATTERN.match(normalized_email) is None:
+                    invalid_entries.append(
+                        {
+                            **base_entry,
+                            "email": normalized_email,
+                            "reason": "invalid_email",
+                        }
+                    )
+                else:
+                    emails.append(normalized_email)
+                    resolved_entries.append(
+                        {
+                            **base_entry,
+                            "email": normalized_email,
+                        }
+                    )
+        elif source_type == "CURRENT_HANDLER":
+            ignored_entries.append(
+                {
+                    "source_type": "CURRENT_HANDLER",
+                    "reason": "no_current_handler",
+                }
+            )
         elif source_type == "ROLE_MEMBERS" and value:
-            emails.extend(_resolve_user_emails_by_role(db, value))
-    return _unique_non_empty(emails)
+            role_resolution = _resolve_role_member_targets(db, value)
+            emails.extend(
+                str(item) for item in role_resolution.get("emails", []) if isinstance(item, str)
+            )
+            resolved_entries.extend(
+                [
+                    dict(item)
+                    for item in role_resolution.get("resolved_entries", [])
+                    if isinstance(item, dict)
+                ]
+            )
+            ignored_entries.extend(
+                [
+                    dict(item)
+                    for item in role_resolution.get("ignored_entries", [])
+                    if isinstance(item, dict)
+                ]
+            )
+            invalid_entries.extend(
+                [
+                    dict(item)
+                    for item in role_resolution.get("invalid_entries", [])
+                    if isinstance(item, dict)
+                ]
+            )
+    return {
+        "emails": _unique_non_empty(emails),
+        "resolved_entries": _deduplicate_resolution_entries(resolved_entries),
+        "ignored_entries": _deduplicate_resolution_entries(ignored_entries),
+        "invalid_entries": _deduplicate_resolution_entries(invalid_entries),
+    }
 
 
 def _resolve_recipients(
     db: Session,
     ticket: Ticket,
     recipient_config: dict[str, Any],
-) -> dict[str, list[str]]:
+) -> dict[str, object]:
+    to_result = _resolve_recipient_bucket(db, ticket, list(recipient_config.get("to", [])))
+    cc_result = _resolve_recipient_bucket(db, ticket, list(recipient_config.get("cc", [])))
+    bcc_result = _resolve_recipient_bucket(db, ticket, list(recipient_config.get("bcc", [])))
+    resolution = {
+        "to": {
+            "resolved_entries": to_result["resolved_entries"],
+            "ignored_entries": to_result["ignored_entries"],
+            "invalid_entries": to_result["invalid_entries"],
+        },
+        "cc": {
+            "resolved_entries": cc_result["resolved_entries"],
+            "ignored_entries": cc_result["ignored_entries"],
+            "invalid_entries": cc_result["invalid_entries"],
+        },
+        "bcc": {
+            "resolved_entries": bcc_result["resolved_entries"],
+            "ignored_entries": bcc_result["ignored_entries"],
+            "invalid_entries": bcc_result["invalid_entries"],
+        },
+        "resolved_entries": _deduplicate_resolution_entries(
+            [
+                *list(to_result["resolved_entries"]),
+                *list(cc_result["resolved_entries"]),
+                *list(bcc_result["resolved_entries"]),
+            ]
+        ),
+        "ignored_entries": _deduplicate_resolution_entries(
+            [
+                *list(to_result["ignored_entries"]),
+                *list(cc_result["ignored_entries"]),
+                *list(bcc_result["ignored_entries"]),
+            ]
+        ),
+        "invalid_entries": _deduplicate_resolution_entries(
+            [
+                *list(to_result["invalid_entries"]),
+                *list(cc_result["invalid_entries"]),
+                *list(bcc_result["invalid_entries"]),
+            ]
+        ),
+    }
     return {
-        "to": _resolve_recipient_bucket(db, ticket, list(recipient_config.get("to", []))),
-        "cc": _resolve_recipient_bucket(db, ticket, list(recipient_config.get("cc", []))),
-        "bcc": _resolve_recipient_bucket(db, ticket, list(recipient_config.get("bcc", []))),
+        "to": list(to_result["emails"]),
+        "cc": list(cc_result["emails"]),
+        "bcc": list(bcc_result["emails"]),
+        "resolution": resolution,
     }
 
 
@@ -890,12 +1085,36 @@ def execute_task_instance(
     try:
         if task_template.task_type == TASK_TYPE_EMAIL:
             recipients = _resolve_recipients(db, ticket, task_template.recipient_config)
+            recipient_resolution = (
+                dict(recipients.get("resolution"))
+                if isinstance(recipients.get("resolution"), dict)
+                else {}
+            )
+            _make_task_log(
+                db,
+                task_instance_id=instance.id,
+                stage="recipients_resolved",
+                actor_name=instance.operator_name or "System",
+                input_summary={"recipient_config": dict(task_template.recipient_config or {})},
+                response_summary=recipient_resolution,
+            )
+            db.commit()
+            db.refresh(instance)
+            if recipient_resolution.get("invalid_entries"):
+                return _fail_task_instance(
+                    db,
+                    instance,
+                    message="Invalid email recipients configured",
+                    rendered_summary=rendered,
+                    response_summary=recipient_resolution,
+                )
             if not recipients["to"]:
                 return _fail_task_instance(
                     db,
                     instance,
                     message="Email recipients resolved to an empty set",
                     rendered_summary=rendered,
+                    response_summary=recipient_resolution,
                 )
             sender_config_id = _extract_sender_config_id(task_template.target_config) or _extract_sender_config_id(
                 instance.template_snapshot
@@ -913,15 +1132,25 @@ def execute_task_instance(
                         instance,
                         message=detail,
                         rendered_summary=rendered,
+                        response_summary=recipient_resolution,
                     )
             delivery_result = deliver_email(
-                recipients=recipients,
+                recipients={
+                    "to": list(recipients["to"]),
+                    "cc": list(recipients["cc"]),
+                    "bcc": list(recipients["bcc"]),
+                },
                 rendered=rendered,
                 settings=settings,
                 mail_sender=mail_sender,
             )
             latest_result = {
-                "recipients": recipients,
+                "recipients": {
+                    "to": list(recipients["to"]),
+                    "cc": list(recipients["cc"]),
+                    "bcc": list(recipients["bcc"]),
+                },
+                "recipient_resolution": recipient_resolution,
                 "rendered": rendered,
                 "response": delivery_result,
                 "sender_config_id": sender_config_id,
@@ -988,7 +1217,12 @@ def execute_task_instance(
         stage="success",
         actor_name=instance.operator_name or "System",
         rendered_summary=rendered,
-        response_summary=latest_result.get("response", {}),
+        response_summary={
+            "delivery": latest_result.get("response", {}),
+            "recipient_resolution": latest_result.get("recipient_resolution", {}),
+        }
+        if instance.task_type == TASK_TYPE_EMAIL
+        else latest_result.get("response", {}),
     )
     db.commit()
     db.refresh(instance)

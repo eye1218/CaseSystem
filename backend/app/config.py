@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     celery_task_eager_propagates: bool = True
     celery_event_sweep_interval_seconds: int = 30
     realtime_redis_url: str = "memory://"
+    ticket_cache_redis_url: str | None = None
     realtime_socket_path: str = "/socket.io"
     realtime_socket_token_ttl_minutes: int = 15
     ticket_cache_ttl_seconds: int = 60

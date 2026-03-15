@@ -1,0 +1,21 @@
+[Unit]
+Description=CaseSystem Preview Celery Beat
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/workspace/CaseSystem
+Environment=CASESYSTEM_ENVIRONMENT=preview
+Environment=CASESYSTEM_COOKIE_SECURE=false
+Environment=CASESYSTEM_CELERY_TASK_ALWAYS_EAGER=false
+Environment=CASESYSTEM_CELERY_TASK_EAGER_PROPAGATES=false
+Environment=CASESYSTEM_CELERY_BROKER_URL=redis://127.0.0.1:6379/0
+Environment=CASESYSTEM_CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/1
+Environment=CASESYSTEM_CELERY_EVENT_SWEEP_INTERVAL_SECONDS=30
+ExecStart=/root/workspace/CaseSystem/.venv/bin/celery -A app.worker.celery_app.celery_app beat --loglevel=INFO
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

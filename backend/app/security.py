@@ -15,7 +15,15 @@ password_hasher = PasswordHasher(memory_cost=19456, time_cost=2, parallelism=1)
 
 
 def utcnow() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def coerce_utc_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def hash_password(password: str) -> str:

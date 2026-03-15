@@ -1,10 +1,25 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import select
 
 from app.enums import CounterType, RefreshTokenStatus, SessionStatus
 from app.models import AuthLoginCounter, AuthSession, RefreshToken, User
+from app.security import coerce_utc_datetime
 from .conftest import issue_csrf, login
+
+
+def test_coerce_utc_datetime_normalizes_timezone_aware_values():
+    aware = datetime(2026, 3, 16, 9, 0, tzinfo=timezone(timedelta(hours=8)))
+
+    assert coerce_utc_datetime(aware) == datetime(2026, 3, 16, 1, 0)
+
+
+def test_coerce_utc_datetime_preserves_naive_values():
+    naive = datetime(2026, 3, 16, 9, 0)
+
+    assert coerce_utc_datetime(naive) == naive
 
 
 def test_login_refresh_rotation_and_reuse_detection(client, db_session_factory):

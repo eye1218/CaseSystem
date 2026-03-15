@@ -14,6 +14,20 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 RUN_TESTS="${RUN_TESTS:-1}"
 BUILD_FRONTEND="${BUILD_FRONTEND:-1}"
 SYNC_LOCAL_ENV="${SYNC_LOCAL_ENV:-1}"
+CELERY_ENABLE_SERVICES="${CELERY_ENABLE_SERVICES:-0}"
+CELERY_BROKER_URL="${CELERY_BROKER_URL:-}"
+CELERY_RESULT_BACKEND="${CELERY_RESULT_BACKEND:-}"
+CELERY_EVENT_SWEEP_INTERVAL_SECONDS="${CELERY_EVENT_SWEEP_INTERVAL_SECONDS:-30}"
+
+if [[ "${CELERY_ENABLE_SERVICES}" == "1" ]]; then
+  if [[ -z "${CELERY_BROKER_URL}" ]]; then
+    echo "CELERY_BROKER_URL is required when CELERY_ENABLE_SERVICES=1" >&2
+    exit 1
+  fi
+  if [[ -z "${CELERY_RESULT_BACKEND}" ]]; then
+    CELERY_RESULT_BACKEND="${CELERY_BROKER_URL}"
+  fi
+fi
 
 GIT_COMMON_DIR="$(git -C "${ROOT_DIR}" rev-parse --git-common-dir 2>/dev/null || true)"
 if [[ -n "${GIT_COMMON_DIR}" && "${GIT_COMMON_DIR}" != /* ]]; then
@@ -94,7 +108,7 @@ rsync -az --delete \
 
 echo "==> Preparing remote runtime"
 ssh "${REMOTE_USER}@${REMOTE_HOST}" \
-  "REMOTE_DIR='${REMOTE_DIR}' SERVICE_NAME='${SERVICE_NAME}' APP_PORT='${APP_PORT}' PYTHON_BIN='${PYTHON_BIN}' bash -s" <<'EOF'
+  "REMOTE_DIR='${REMOTE_DIR}' SERVICE_NAME='${SERVICE_NAME}' APP_PORT='${APP_PORT}' PYTHON_BIN='${PYTHON_BIN}' CELERY_ENABLE_SERVICES='${CELERY_ENABLE_SERVICES}' CELERY_BROKER_URL='${CELERY_BROKER_URL}' CELERY_RESULT_BACKEND='${CELERY_RESULT_BACKEND}' CELERY_EVENT_SWEEP_INTERVAL_SECONDS='${CELERY_EVENT_SWEEP_INTERVAL_SECONDS}' bash -s" <<'EOF'
 set -euo pipefail
 
 mkdir -p "${REMOTE_DIR}"
@@ -107,6 +121,18 @@ fi
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -e '.[dev]'
 
+CELERY_ENV_LINES=""
+if [[ "${CELERY_ENABLE_SERVICES}" == "1" ]]; then
+  CELERY_ENV_LINES=$(cat <<LINES
+Environment="CASESYSTEM_CELERY_TASK_ALWAYS_EAGER=false"
+Environment="CASESYSTEM_CELERY_TASK_EAGER_PROPAGATES=false"
+Environment="CASESYSTEM_CELERY_BROKER_URL=${CELERY_BROKER_URL}"
+Environment="CASESYSTEM_CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}"
+Environment="CASESYSTEM_CELERY_EVENT_SWEEP_INTERVAL_SECONDS=${CELERY_EVENT_SWEEP_INTERVAL_SECONDS}"
+LINES
+)
+fi
+
 cat >/etc/systemd/system/${SERVICE_NAME}.service <<UNIT
 [Unit]
 Description=CaseSystem Preview Service
@@ -117,6 +143,7 @@ Type=simple
 WorkingDirectory=${REMOTE_DIR}
 Environment=CASESYSTEM_ENVIRONMENT=preview
 Environment=CASESYSTEM_COOKIE_SECURE=false
+${CELERY_ENV_LINES}
 ExecStart=${REMOTE_DIR}/.venv/bin/uvicorn app.main:app --app-dir ${REMOTE_DIR}/backend --host 0.0.0.0 --port ${APP_PORT}
 Restart=always
 RestartSec=3
@@ -130,6 +157,59 @@ systemctl daemon-reload
 systemctl enable --now "${SERVICE_NAME}"
 systemctl restart "${SERVICE_NAME}"
 systemctl --no-pager --full status "${SERVICE_NAME}" | sed -n '1,18p'
+
+if [[ "${CELERY_ENABLE_SERVICES}" == "1" ]]; then
+  cat >/etc/systemd/system/${SERVICE_NAME}-celery-worker.service <<UNIT
+[Unit]
+Description=CaseSystem Preview Celery Worker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=${REMOTE_DIR}
+Environment=CASESYSTEM_ENVIRONMENT=preview
+Environment=CASESYSTEM_COOKIE_SECURE=false
+${CELERY_ENV_LINES}
+ExecStart=${REMOTE_DIR}/.venv/bin/celery -A app.worker.celery_app.celery_app worker --loglevel=INFO --pool=solo
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+  cat >/etc/systemd/system/${SERVICE_NAME}-celery-beat.service <<UNIT
+[Unit]
+Description=CaseSystem Preview Celery Beat
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=${REMOTE_DIR}
+Environment=CASESYSTEM_ENVIRONMENT=preview
+Environment=CASESYSTEM_COOKIE_SECURE=false
+${CELERY_ENV_LINES}
+ExecStart=${REMOTE_DIR}/.venv/bin/celery -A app.worker.celery_app.celery_app beat --loglevel=INFO
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+  systemctl daemon-reload
+  systemctl enable --now "${SERVICE_NAME}-celery-worker"
+  systemctl restart "${SERVICE_NAME}-celery-worker"
+  systemctl --no-pager --full status "${SERVICE_NAME}-celery-worker" | sed -n '1,18p'
+  systemctl enable --now "${SERVICE_NAME}-celery-beat"
+  systemctl restart "${SERVICE_NAME}-celery-beat"
+  systemctl --no-pager --full status "${SERVICE_NAME}-celery-beat" | sed -n '1,18p'
+else
+  systemctl disable --now "${SERVICE_NAME}-celery-worker" 2>/dev/null || true
+  systemctl disable --now "${SERVICE_NAME}-celery-beat" 2>/dev/null || true
+fi
 .venv/bin/python - <<PY
 import json
 import time

@@ -18,7 +18,7 @@ from ...models import (
     User,
     UserRole,
 )
-from ...security import hash_password, utcnow
+from ...security import coerce_utc_datetime, hash_password, utcnow
 from ..events.models import Event, EventRule
 from ..knowledge.models import KnowledgeArticle, KnowledgeArticleLike
 from ..realtime.models import UserNotification
@@ -98,13 +98,21 @@ def _serialize_group(group: UserGroup, *, member_count: int) -> dict[str, object
 
 
 def _serialize_user(user: User, *, groups: list[dict[str, str]]) -> dict[str, object]:
+    now = utcnow()
     active_roles = [
         role.role_code
         for role in sorted(
             user.roles,
             key=lambda item: ((item.role.sort_order if item.role else 9999), item.role_code),
         )
-        if role.is_active and (role.expires_at is None or role.expires_at > utcnow())
+        if role.is_active
+        and (
+            role.expires_at is None
+            or (
+                coerce_utc_datetime(role.expires_at) is not None
+                and coerce_utc_datetime(role.expires_at) > now
+            )
+        )
     ]
     return {
         "id": user.id,
@@ -260,12 +268,19 @@ def _count_effective_admins(db: Session) -> int:
 
 
 def _user_is_effective_admin(user: User) -> bool:
+    now = utcnow()
     return (
         user.status == UserStatus.ACTIVE.value
         and any(
             role.role_code == RoleCode.ADMIN.value
             and role.is_active
-            and (role.expires_at is None or role.expires_at > utcnow())
+            and (
+                role.expires_at is None
+                or (
+                    coerce_utc_datetime(role.expires_at) is not None
+                    and coerce_utc_datetime(role.expires_at) > now
+                )
+            )
             for role in user.roles
         )
     )
@@ -599,32 +614,44 @@ def update_user_status(
     return {"user": after_payload}
 
 
-def delete_user(db: Session, actor: ActorContext, *, user_id: str) -> dict[str, str]:
+def update_user_password(
+    db: Session,
+    actor: ActorContext,
+    *,
+    user_id: str,
+    password: str,
+) -> dict[str, object]:
     _require_admin_actor(actor)
     user = _get_user_or_error(db, user_id)
     before_groups = _group_refs_by_user_ids(db, [user.id]).get(user.id, [])
     before_payload = _serialize_user(user, groups=before_groups)
 
-    _assert_not_last_effective_admin(db, user)
-    if has_business_participation(db, user_id=user.id):
-        raise UserManagementOperationError(409, "User has business participation and cannot be deleted")
+    user.password_hash = hash_password(password)
+    user.password_changed_at = utcnow()
+    user.token_version += 1
+    user.updated_by = actor.user_id
+    _revoke_user_sessions(db, user_id=user.id, reason="password_changed_by_admin")
+    db.flush()
 
-    memberships = list(
-        db.scalars(select(UserGroupMember).where(UserGroupMember.user_id == user.id)).all()
-    )
-    for membership in memberships:
-        db.delete(membership)
-    db.delete(user)
+    updated = _get_user_or_error(db, user.id)
+    after_groups = _group_refs_by_user_ids(db, [updated.id]).get(updated.id, [])
+    after_payload = _serialize_user(updated, groups=after_groups)
     _record_audit_log(
         db,
         actor=actor,
-        action="user.delete",
+        action="user.password_update",
         entity_type="user",
         entity_id=user.id,
         before=before_payload,
+        after=after_payload,
     )
     db.commit()
-    return {"message": "User deleted"}
+    return {"user": after_payload}
+
+
+def delete_user(db: Session, actor: ActorContext, *, user_id: str) -> dict[str, str]:
+    _require_admin_actor(actor)
+    raise UserManagementOperationError(405, "Physical user deletion is not available in the current stage")
 
 
 def list_user_groups(

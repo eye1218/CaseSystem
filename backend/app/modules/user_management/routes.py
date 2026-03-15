@@ -18,6 +18,7 @@ from .schemas import (
     UserGroupMembersUpdateRequest,
     UserGroupUpdateRequest,
     UserListResponse,
+    UserPasswordUpdateRequest,
     UserStatusUpdateRequest,
     UserUpdateRequest,
 )
@@ -35,6 +36,7 @@ from .service import (
     remove_user_group_member,
     update_user,
     update_user_group,
+    update_user_password,
     update_user_status,
 )
 
@@ -146,6 +148,29 @@ def user_status_update(
             user_id=user_id,
             status=payload.status.value,
             reason=payload.reason,
+        )
+    except UserManagementOperationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return UserDetailResponse.model_validate(detail)
+
+
+@user_management_router.post(
+    "/api/v1/users/{user_id}/password",
+    response_model=UserDetailResponse,
+    dependencies=[Depends(require_csrf)],
+)
+def user_password_update(
+    user_id: str,
+    payload: UserPasswordUpdateRequest,
+    actor: Annotated[ActorContext, Depends(require_auth)],
+    db: Annotated[Session, Depends(get_db)],
+) -> UserDetailResponse:
+    try:
+        detail = update_user_password(
+            db,
+            actor,
+            user_id=user_id,
+            password=payload.password,
         )
     except UserManagementOperationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

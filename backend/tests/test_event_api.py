@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
 
 from app.modules.events import service as event_service
 from app.modules.events.enums import EventQueueStatus, EventQueueType
-from app.modules.events.models import Event, EventBinding
+from app.modules.events.models import Event, EventBinding, EventRule
 from app.modules.events.service import claim_due_pending_event_with_bindings
 from app.modules.events.tasks import sweep_due_events
+from app.modules.tickets.models import Ticket
 from app.security import utcnow
 from .conftest import issue_csrf, login
 
@@ -133,6 +134,53 @@ def post_ticket_action(client, ticket_id: int, action: str, note: str) -> None:
         headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
     )
     assert response.status_code == 200, response.text
+
+
+def test_compute_dispatch_time_accepts_timezone_aware_ticket_created_at():
+    ticket = Ticket(
+        id=1,
+        version=1,
+        title="Aware Ticket",
+        description="Timezone-aware ticket",
+        category_id="incident",
+        category_name="Incident",
+        source="portal",
+        priority="P2",
+        risk_score=50,
+        main_status="OPEN",
+        sub_status="NONE",
+        created_by="Admin",
+        responsibility_level="L1",
+        created_at=datetime(2026, 3, 16, 9, 0, tzinfo=timezone(timedelta(hours=8))),
+        updated_at=datetime(2026, 3, 16, 9, 0, tzinfo=timezone(timedelta(hours=8))),
+    )
+    rule = EventRule(
+        name="Timer rule",
+        code="timer-aware-created-at",
+        event_type="timer",
+        status="enabled",
+        trigger_point="ticket.response.timeout",
+        object_type="ticket",
+        tags=[],
+        filter_config=[],
+        time_rule_config={
+            "target_offset_amount": 30,
+            "target_offset_unit": "minutes",
+            "adjustment_direction": "before",
+            "adjustment_amount": 5,
+            "adjustment_unit": "minutes",
+        },
+        created_by_name="Admin",
+        updated_by_name="Admin",
+    )
+
+    dispatch_time = event_service._compute_dispatch_time(
+        rule=rule,
+        ticket=ticket,
+        occurred_at=datetime(2026, 3, 16, 1, 0),
+    )
+
+    assert dispatch_time == datetime(2026, 3, 16, 1, 25)
 
 
 def test_admin_can_create_update_list_and_delete_event_rule(client):

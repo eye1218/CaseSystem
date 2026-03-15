@@ -23,6 +23,8 @@ from ..tickets.seed_data import CATEGORY_NAMES
 from .enums import EventQueueStatus, EventQueueType, EventRuleStatus, EventRuleType
 from .models import Event, EventBinding, EventRule, EventRuleBinding
 
+IMMEDIATE_EVENT_DISPATCH_SESSION_KEY = "event_immediate_dispatch_ids"
+
 TRIGGER_POINT_LABELS: dict[str, str] = {
     "ticket.created": "工单创建",
     "ticket.updated": "工单更新",
@@ -678,6 +680,119 @@ def _build_event_binding_signatures(
     ]
 
 
+def _register_immediate_dispatches(
+    db: Session, dispatches: list[tuple[Event, list[EventBinding]]]
+) -> None:
+    if not dispatches:
+        return
+
+    registered = db.info.setdefault(IMMEDIATE_EVENT_DISPATCH_SESSION_KEY, [])
+    if not isinstance(registered, list):
+        registered = []
+        db.info[IMMEDIATE_EVENT_DISPATCH_SESSION_KEY] = registered
+
+    existing = {item for item in registered if isinstance(item, str)}
+    for event, bindings in dispatches:
+        if event.status != EventQueueStatus.TRIGGERED.value or not bindings:
+            continue
+        if event.id in existing:
+            continue
+        registered.append(event.id)
+        existing.add(event.id)
+
+
+def clear_registered_immediate_dispatches(db: Session) -> None:
+    db.info.pop(IMMEDIATE_EVENT_DISPATCH_SESSION_KEY, None)
+
+
+def _pop_registered_immediate_dispatch_ids(db: Session) -> list[str]:
+    registered = db.info.pop(IMMEDIATE_EVENT_DISPATCH_SESSION_KEY, [])
+    if not isinstance(registered, list):
+        return []
+
+    event_ids: list[str] = []
+    seen: set[str] = set()
+    for item in registered:
+        if not isinstance(item, str) or item in seen:
+            continue
+        seen.add(item)
+        event_ids.append(item)
+    return event_ids
+
+
+def _load_triggered_dispatches(
+    db: Session, event_ids: list[str]
+) -> list[tuple[Event, list[EventBinding]]]:
+    if not event_ids:
+        return []
+
+    events = list(
+        db.scalars(
+            select(Event).where(
+                Event.id.in_(event_ids),
+                Event.status == EventQueueStatus.TRIGGERED.value,
+            )
+        ).all()
+    )
+    event_map = {event.id: event for event in events}
+
+    dispatches: list[tuple[Event, list[EventBinding]]] = []
+    for event_id in event_ids:
+        event = event_map.get(event_id)
+        if event is None:
+            continue
+        bindings = list(
+            db.scalars(
+                select(EventBinding)
+                .where(EventBinding.event_id == event.id)
+                .order_by(EventBinding.created_at.asc())
+            ).all()
+        )
+        dispatches.append((event, bindings))
+    return dispatches
+
+
+def _restore_triggered_events_to_pending(db: Session, event_ids: list[str]) -> None:
+    if not event_ids:
+        return
+    now = utcnow()
+    db.execute(
+        update(Event)
+        .where(
+            Event.id.in_(event_ids),
+            Event.status == EventQueueStatus.TRIGGERED.value,
+        )
+        .values(
+            status=EventQueueStatus.PENDING.value,
+            triggered_at=None,
+            updated_at=now,
+        )
+    )
+    db.commit()
+
+
+def dispatch_registered_immediate_events(db: Session) -> int:
+    event_ids = _pop_registered_immediate_dispatch_ids(db)
+    if not event_ids:
+        return 0
+
+    dispatches = _load_triggered_dispatches(db, event_ids)
+    signatures = [
+        signature
+        for event, bindings in dispatches
+        for signature in _build_event_binding_signatures(event, bindings)
+    ]
+    if not signatures:
+        return 0
+
+    try:
+        group(signatures).apply_async()
+    except Exception:
+        _restore_triggered_events_to_pending(db, event_ids)
+        raise
+    return len(signatures)
+
+
 def trigger_due_pending_event_with_bindings(
     db: Session, *, event_id: str, due_at: datetime, triggered_at: datetime
 ) -> tuple[Event, list[EventBinding]] | None:
@@ -714,16 +829,24 @@ def _compute_dispatch_time(
     ticket: Ticket,
     occurred_at: datetime,
 ) -> datetime:
+    normalized_occurred_at = _coerce_datetime(occurred_at)
+    if normalized_occurred_at is None:
+        raise EventOperationError(422, "Missing occurred_at for event dispatch")
+
     time_rule = dict(rule.time_rule_config or {})
     if rule.event_type == EventRuleType.NORMAL.value:
         if time_rule.get("mode") == "immediate":
-            return occurred_at
-        return occurred_at + _timedelta_for(
+            return normalized_occurred_at
+        return normalized_occurred_at + _timedelta_for(
             int(time_rule["delay_amount"]),
             str(time_rule["delay_unit"]),
         )
 
-    target_time = ticket.created_at + _timedelta_for(
+    created_at = _coerce_datetime(ticket.created_at)
+    if created_at is None:
+        raise EventOperationError(422, "Ticket created_at is required for timed events")
+
+    target_time = created_at + _timedelta_for(
         int(time_rule["target_offset_amount"]),
         str(time_rule["target_offset_unit"]),
     )
@@ -771,14 +894,18 @@ def _queue_dispatch_event(
     triggered_at: datetime | None = None,
 ) -> tuple[Event, list[EventBinding]]:
     now = utcnow()
+    normalized_trigger_time = _coerce_datetime(trigger_time)
+    normalized_triggered_at = _coerce_datetime(triggered_at)
+    if normalized_trigger_time is None:
+        raise EventOperationError(422, "Missing trigger_time for event dispatch")
     event = Event(
         event_type=(
             EventQueueType.INSTANT.value
-            if trigger_time <= now
+            if normalized_trigger_time <= now
             else EventQueueType.TIMED.value
         ),
         status=queue_status,
-        trigger_time=trigger_time,
+        trigger_time=normalized_trigger_time,
         title=rule.name,
         description=rule.description,
         payload={
@@ -791,9 +918,9 @@ def _queue_dispatch_event(
             "trigger_point": trigger_point,
         },
         created_by_user_id=rule.updated_by_user_id,
-        triggered_at=triggered_at,
+        triggered_at=normalized_triggered_at,
         created_at=now,
-        updated_at=triggered_at or now,
+        updated_at=normalized_triggered_at or now,
     )
     db.add(event)
     db.flush()
@@ -831,7 +958,7 @@ def queue_matching_ticket_rules(
     occurred_at: datetime | None = None,
     dispatch_immediate: bool = False,
 ) -> list[tuple[Event, list[EventBinding]]]:
-    effective_occurred_at = occurred_at or utcnow()
+    effective_occurred_at = _coerce_datetime(occurred_at) or utcnow()
     rules = list(
         db.scalars(
             select(EventRule).where(
@@ -885,12 +1012,14 @@ def create_ticket_event(
     ticket = _load_ticket(db, ticket_id)
     if ticket is None:
         return
-    queue_matching_ticket_rules(
+    created = queue_matching_ticket_rules(
         db,
         ticket=ticket,
         trigger_point=name,
         occurred_at=occurred_at or utcnow(),
+        dispatch_immediate=True,
     )
+    _register_immediate_dispatches(db, created)
 
 
 def _create_ticket_timeout_signal(
@@ -933,7 +1062,7 @@ def create_ticket_timeout_events(
             db,
             ticket_id=ticket_id,
             trigger_point="ticket.response.timeout",
-            trigger_time=response_deadline_at,
+            trigger_time=_coerce_datetime(response_deadline_at) or response_deadline_at,
         )
 
     if resolution_deadline_at is not None:
@@ -941,7 +1070,7 @@ def create_ticket_timeout_events(
             db,
             ticket_id=ticket_id,
             trigger_point="ticket.resolution.timeout",
-            trigger_time=resolution_deadline_at,
+            trigger_time=_coerce_datetime(resolution_deadline_at) or resolution_deadline_at,
         )
 
 

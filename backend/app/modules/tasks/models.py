@@ -41,9 +41,9 @@ class TaskTemplate(TimestampMixin, Base):
         JSON, default=dict, nullable=False
     )
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     created_by_name: Mapped[str] = mapped_column(String(128), nullable=False)
-    updated_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    updated_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     updated_by_name: Mapped[str] = mapped_column(String(128), nullable=False)
 
 
@@ -77,7 +77,7 @@ class TaskInstance(TimestampMixin, Base):
     retry_of_task_id: Mapped[Optional[str]] = mapped_column(
         String(36), ForeignKey("task_instances.id"), nullable=True
     )
-    operator_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    operator_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     operator_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -93,7 +93,7 @@ class TaskExecutionLog(Base):
         String(36), ForeignKey("task_instances.id", ondelete="CASCADE"), nullable=False
     )
     stage: Mapped[str] = mapped_column(String(32), nullable=False)
-    actor_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    actor_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     actor_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     input_summary: Mapped[dict[str, object]] = mapped_column(
         JSON, default=dict, nullable=False

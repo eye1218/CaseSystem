@@ -39,9 +39,9 @@ class MailSenderConfig(TimestampMixin, Base):
     latest_test_status: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     latest_test_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     latest_test_error_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     created_by_name: Mapped[str] = mapped_column(String(128), nullable=False)
-    updated_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    updated_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     updated_by_name: Mapped[str] = mapped_column(String(128), nullable=False)
 
 
@@ -54,7 +54,7 @@ class MailSenderAuditLog(Base):
     sender_id: Mapped[Optional[str]] = mapped_column(
         String(36), ForeignKey("mail_sender_configs.id", ondelete="SET NULL"), nullable=True
     )
-    actor_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    actor_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     actor_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     action: Mapped[str] = mapped_column(String(64), nullable=False)
     summary: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)

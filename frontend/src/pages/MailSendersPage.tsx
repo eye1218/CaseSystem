@@ -67,6 +67,19 @@ function fromSender(item: MailSenderSummary): MailSenderFormState {
   };
 }
 
+function formEquals(left: MailSenderFormState, right: MailSenderFormState): boolean {
+  return (
+    left.sender_name === right.sender_name &&
+    left.sender_email === right.sender_email &&
+    left.auth_account === right.auth_account &&
+    left.auth_password === right.auth_password &&
+    left.smtp_host === right.smtp_host &&
+    left.smtp_port === right.smtp_port &&
+    left.security_type === right.security_type &&
+    left.status === right.status
+  );
+}
+
 function statusPalette(status: MailSenderStatus) {
   return status === "ENABLED"
     ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800/40 dark:bg-emerald-900/20 dark:text-emerald-300"
@@ -137,6 +150,12 @@ export default function MailSendersPage() {
     () => items.find((item) => item.id === selectedId) ?? null,
     [items, selectedId],
   );
+  const savedForm = useMemo(
+    () => (selectedSender ? fromSender(selectedSender) : null),
+    [selectedSender],
+  );
+  const hasUnsavedChanges =
+    panelMode === "edit" && savedForm !== null && !formEquals(form, savedForm);
 
   function openCreatePanel() {
     setPanelMode("create");
@@ -238,6 +257,10 @@ export default function MailSendersPage() {
 
   async function handleTestSend() {
     if (!selectedId) {
+      return;
+    }
+    if (hasUnsavedChanges) {
+      setError(zh ? "请先保存当前修改，再执行测试发送。" : "Save the current changes before running test send.");
       return;
     }
     setTesting(true);
@@ -673,6 +696,11 @@ export default function MailSendersPage() {
                   {selectedSender.latest_test_status ?? (zh ? "未测试" : "Untested")} /{" "}
                   {formatApiDateTime(selectedSender.latest_test_at, language)}
                 </div>
+                {hasUnsavedChanges ? (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-300">
+                    {zh ? "当前表单有未保存修改，测试发送仍会使用已保存配置。" : "The form has unsaved changes. Test send uses the saved configuration."}
+                  </p>
+                ) : null}
                 {selectedSender.latest_test_error_summary ? (
                   <p className="text-[11px] text-rose-500">{selectedSender.latest_test_error_summary}</p>
                 ) : null}
@@ -697,13 +725,18 @@ export default function MailSendersPage() {
                   />
                   <button
                     onClick={() => void handleTestSend()}
-                    disabled={testing}
+                    disabled={testing || hasUnsavedChanges}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <PlayCircle className="h-3.5 w-3.5" />
                     {testing ? (zh ? "测试中…" : "Testing...") : zh ? "执行测试" : "Run Test"}
                   </button>
                 </div>
+                {hasUnsavedChanges ? (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-300">
+                    {zh ? "请先点击“保存修改”，测试发送只会使用已保存的发送者配置。" : "Save changes first. Test send only uses the saved sender configuration."}
+                  </p>
+                ) : null}
                 {fieldErrors.test_email ? <p className="text-[11px] text-red-500">{fieldErrors.test_email}</p> : null}
                 {latestTestResponse ? (
                   <p className="text-[11px] text-slate-600 dark:text-slate-300">

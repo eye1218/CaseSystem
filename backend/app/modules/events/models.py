@@ -26,7 +26,7 @@ class Event(Base):
     payload: Mapped[dict[str, object]] = mapped_column(
         JSON, default=dict, nullable=False
     )
-    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     triggered_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -82,9 +82,9 @@ class EventRule(Base):
     time_rule_config: Mapped[dict[str, object]] = mapped_column(
         JSON, default=dict, nullable=False
     )
-    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     created_by_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    updated_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    updated_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     updated_by_name: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

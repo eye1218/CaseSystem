@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional, cast as type_cast
@@ -23,8 +24,10 @@ from ...reporting import list_reports_for_ticket_detail, list_templates_for_tick
 from ...security import utcnow
 from ..events.service import (
     cancel_pending_ticket_events,
+    clear_registered_immediate_dispatches,
     create_ticket_event,
     create_ticket_timeout_events,
+    dispatch_registered_immediate_events,
 )
 from ..knowledge.service import list_related_articles_for_ticket_detail
 from ..realtime.service import (
@@ -86,6 +89,7 @@ class TicketOperationError(Exception):
 
 
 TICKET_VERSION_CONFLICT_MESSAGE = "数据已变更，请刷新后重试"
+logger = logging.getLogger(__name__)
 
 
 def _base_conditions(actor: ActorContext) -> list[ColumnElement[bool]]:
@@ -911,7 +915,13 @@ def _commit_ticket_changes(db: Session) -> None:
         db.commit()
     except StaleDataError as exc:
         db.rollback()
+        clear_registered_immediate_dispatches(db)
         raise TicketOperationError(409, TICKET_VERSION_CONFLICT_MESSAGE) from exc
+
+    try:
+        dispatch_registered_immediate_events(db)
+    except Exception:
+        logger.exception("Failed to dispatch immediate Event bindings after ticket commit")
 
 
 def _invalidate_ticket_cache(ticket_id: int) -> None:

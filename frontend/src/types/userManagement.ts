@@ -54,6 +54,10 @@ export interface ManagedUserStatusUpdatePayload {
   reason?: string | null;
 }
 
+export interface ManagedUserPasswordUpdatePayload {
+  password: string;
+}
+
 export interface UserGroupSummary {
   id: string;
   name: string;

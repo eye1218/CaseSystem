@@ -41,6 +41,16 @@ from .schemas import (
 )
 
 
+def _resolve_frontend_dist() -> Path | None:
+    source_tree_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    docker_runtime_dist = Path("/app/frontend/dist")
+
+    for candidate in (source_tree_dist, docker_runtime_dist):
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or Settings()
 
@@ -73,7 +83,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    frontend_dist = _resolve_frontend_dist()
 
     class SPAStaticFiles(StaticFiles):
         async def get_response(self, path: str, scope):
@@ -258,7 +268,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(user_management_router)
     app.include_router(report_router)
 
-    if frontend_dist.exists():
+    if frontend_dist is not None:
         app.mount(
             "/", SPAStaticFiles(directory=frontend_dist, html=True), name="frontend"
         )

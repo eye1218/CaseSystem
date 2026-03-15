@@ -20,7 +20,6 @@ import {
   addUserGroupMembers,
   createUser,
   createUserGroup,
-  deleteUser,
   deleteUserGroup,
   getUserDetail,
   getUserGroupDetail,
@@ -28,6 +27,7 @@ import {
   listUsers,
   removeUserGroupMember,
   updateUser,
+  updateUserPassword,
   updateUserGroup,
   updateUserStatus,
 } from "../api/users";
@@ -58,6 +58,7 @@ interface UserFormState {
   display_name: string;
   email: string;
   password: string;
+  next_password: string;
   role_codes: RoleCode[];
   group_ids: string[];
 }
@@ -87,6 +88,7 @@ const initialUserForm: UserFormState = {
   display_name: "",
   email: "",
   password: "",
+  next_password: "",
   role_codes: ["T1"],
   group_ids: [],
 };
@@ -249,6 +251,7 @@ export default function UsersPage() {
         display_name: response.user.display_name,
         email: response.user.email ?? "",
         password: "",
+        next_password: "",
         role_codes: response.user.roles,
         group_ids: response.user.groups.map((group) => group.id),
       });
@@ -362,7 +365,15 @@ export default function UsersPage() {
           email: userForm.email.trim() ? userForm.email.trim() : null,
           group_ids: userForm.group_ids,
         });
-        setActiveUserDetail(response.user);
+        let nextDetail = response.user;
+        if (userForm.next_password.trim()) {
+          const passwordUpdated = await updateUserPassword(activeUserId, {
+            password: userForm.next_password,
+          });
+          nextDetail = passwordUpdated.user;
+        }
+        setActiveUserDetail(nextDetail);
+        updateUserFormField("next_password", "");
         setDrawerKind("user-detail");
       }
       await Promise.all([loadUsers(), refreshGroupCatalog(), refreshUserCatalog(), refreshActiveGroupDetail()]);
@@ -424,23 +435,6 @@ export default function UsersPage() {
         setActiveUserDetail(response.user);
       }
       await Promise.all([loadUsers(), refreshActiveGroupDetail()]);
-    } catch (error) {
-      window.alert(readApiMessage(error, zh));
-    }
-  }
-
-  async function handleDeleteUser(user: ManagedUserSummary) {
-    const confirmed = window.confirm(
-      zh ? `删除用户 ${user.display_name}？此操作不可撤销。` : `Delete ${user.display_name}? This cannot be undone.`,
-    );
-    if (!confirmed) return;
-
-    try {
-      await deleteUser(user.id);
-      if (activeUserId === user.id) {
-        closeDrawer();
-      }
-      await Promise.all([loadUsers(), refreshUserCatalog(), refreshActiveGroupDetail()]);
     } catch (error) {
       window.alert(readApiMessage(error, zh));
     }
@@ -740,10 +734,6 @@ export default function UsersPage() {
                                 label={user.status === "active" ? (zh ? "停用" : "Disable") : zh ? "启用" : "Enable"}
                                 icon={user.status === "active" ? <UserMinus className="h-3.5 w-3.5" /> : <UserPlus className="h-3.5 w-3.5" />}
                               />
-                              <DangerButton
-                                onClick={() => void handleDeleteUser(user)}
-                                label={zh ? "删除" : "Delete"}
-                              />
                             </ActionRow>
                           </Cell>
                         </tr>
@@ -905,6 +895,38 @@ export default function UsersPage() {
                         />
                       )}
                     </section>
+
+                    {drawerKind !== "user-create" ? (
+                      <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/40">
+                        <div className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                          {zh ? "密码管理" : "Password Management"}
+                        </div>
+                        {drawerKind === "user-edit" ? (
+                          <div className="flex flex-col gap-3">
+                            <Field label={zh ? "新密码" : "New Password"}>
+                              <input
+                                type="password"
+                                value={userForm.next_password}
+                                onChange={(event) => updateUserFormField("next_password", event.target.value)}
+                                className={inputClassName(false)}
+                                placeholder={zh ? "输入至少 8 位的新密码" : "Enter a new password with at least 8 characters"}
+                              />
+                            </Field>
+                            <div className="text-xs leading-5 text-slate-500 dark:text-slate-400">
+                              {zh
+                                ? "如果这里填写了新密码，点击“保存”时会一并更新密码。修改后，该用户当前所有登录会话将被撤销，需要重新登录。"
+                                : "If a new password is provided here, clicking Save will update it together with the profile changes. Existing sessions will be revoked and re-login will be required."}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-sm leading-6 text-slate-600 dark:text-slate-300">
+                            {zh
+                              ? "点击右下角“编辑”后，可以为该用户设置新密码。"
+                              : "Switch to edit mode to set a new password for this user."}
+                          </div>
+                        )}
+                      </section>
+                    ) : null}
 
                     <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/40">
                       <div className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">

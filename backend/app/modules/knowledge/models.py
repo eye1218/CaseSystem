@@ -18,9 +18,9 @@ class KnowledgeArticle(TimestampMixin, Base):
     category_id: Mapped[str] = mapped_column(String(64), nullable=False)
     content_markdown: Mapped[str] = mapped_column(Text, nullable=False)
     is_pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    created_by_user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    created_by_user_id: Mapped[str] = mapped_column(String(64), nullable=False)
     created_by_name: Mapped[str] = mapped_column(String(128), nullable=False)
-    updated_by_user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    updated_by_user_id: Mapped[str] = mapped_column(String(64), nullable=False)
     updated_by_name: Mapped[str] = mapped_column(String(128), nullable=False)
 
 

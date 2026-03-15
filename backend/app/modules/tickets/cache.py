@@ -131,8 +131,9 @@ _ticket_cache_ttl_seconds: int | None = None
 
 
 def build_ticket_cache(settings: Settings) -> TicketCacheBackend:
-    if settings.realtime_redis_url.startswith(("redis://", "rediss://")):
-        return RedisTicketCacheBackend(settings.realtime_redis_url)
+    redis_url = settings.ticket_cache_redis_url or settings.realtime_redis_url
+    if redis_url.startswith(("redis://", "rediss://")):
+        return RedisTicketCacheBackend(redis_url)
     return DisabledTicketCacheBackend()
 
 

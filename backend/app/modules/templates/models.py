@@ -37,5 +37,5 @@ class Template(TimestampMixin, Base):
     field_values: Mapped[dict[str, object]] = mapped_column(
         JSON, default=dict, nullable=False
     )
-    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
-    updated_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    updated_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)

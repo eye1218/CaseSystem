@@ -15,6 +15,7 @@ from app.models import AuthLoginCounter, AuthSecurityEvent, AuthSession, CsrfTok
 from app.policies import ObjectScope, has_object_access, has_permission
 from app.schemas import AuthResponse, AuthenticatedUser
 from app.security import (
+    coerce_utc_datetime,
     create_access_token,
     decode_access_token,
     generate_csrf_token,
@@ -81,7 +82,8 @@ class AuthService:
             if referer and not any(referer.startswith(allowed) for allowed in self.settings.allowed_origins):
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Referer not allowed")
         csrf_row = self.db.scalar(select(CsrfToken).where(CsrfToken.token_hash == hash_opaque_token(cookie_token)))
-        if csrf_row is None or csrf_row.expires_at <= utcnow():
+        expires_at = coerce_utc_datetime(csrf_row.expires_at) if csrf_row else None
+        if csrf_row is None or expires_at is None or expires_at <= utcnow():
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF token expired")
 
     def _allows_all_origins(self) -> bool:
@@ -109,14 +111,15 @@ class AuthService:
                 event_type=SecurityEventType.USER_DISABLED.value,
             )
             self._raise_login_failed()
-        if user.lock_until and user.lock_until > utcnow():
+        lock_until = coerce_utc_datetime(user.lock_until)
+        if lock_until and lock_until > utcnow():
             self._record_security_event(
                 user=user,
                 username_input=username,
                 ip_address=ip_address,
                 user_agent=user_agent,
                 event_type=SecurityEventType.ACCOUNT_TEMP_LOCKED.value,
-                detail={"lock_until": user.lock_until.isoformat()},
+                detail={"lock_until": lock_until.isoformat()},
             )
             self._raise_login_failed()
         if not verify_password(password, user.password_hash):
@@ -212,7 +215,13 @@ class AuthService:
         user = self.db.scalar(select(User).where(User.id == session_record.user_id))
         if token_row.status != RefreshTokenStatus.ACTIVE.value or token_row.used_at is not None:
             self._handle_refresh_reuse(token_row=token_row, session_record=session_record, user=user, response=response, request=request)
-        if token_row.expires_at <= utcnow() or session_record.status != SessionStatus.ACTIVE.value or user is None:
+        token_expires_at = coerce_utc_datetime(token_row.expires_at)
+        if (
+            token_expires_at is None
+            or token_expires_at <= utcnow()
+            or session_record.status != SessionStatus.ACTIVE.value
+            or user is None
+        ):
             self._clear_auth_cookies(response)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token expired")
         token_row.status = RefreshTokenStatus.ROTATED.value
@@ -353,7 +362,14 @@ class AuthService:
             {
                 role.role_code
                 for role in user.roles
-                if role.is_active and (role.expires_at is None or role.expires_at > utcnow())
+                if role.is_active
+                and (
+                    role.expires_at is None
+                    or (
+                        coerce_utc_datetime(role.expires_at) is not None
+                        and coerce_utc_datetime(role.expires_at) > utcnow()
+                    )
+                )
             }
         )
         return ActorContext(
@@ -369,7 +385,16 @@ class AuthService:
 
     def _resolve_default_role(self, user: User) -> str:
         active_roles = [
-            role for role in user.roles if role.is_active and (role.expires_at is None or role.expires_at > utcnow())
+            role
+            for role in user.roles
+            if role.is_active
+            and (
+                role.expires_at is None
+                or (
+                    coerce_utc_datetime(role.expires_at) is not None
+                    and coerce_utc_datetime(role.expires_at) > utcnow()
+                )
+            )
         ]
         if not active_roles:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User has no active roles")
@@ -478,13 +503,23 @@ class AuthService:
     def _check_login_limits(self, *, username: str, ip_address: str) -> None:
         now = utcnow()
         ip_counter = self._get_counter(counter_type=CounterType.IP.value, counter_key=f"ip:{ip_address}")
-        if ip_counter and ip_counter.blocked_until and ip_counter.blocked_until > now:
+        ip_blocked_until = coerce_utc_datetime(
+            ip_counter.blocked_until if ip_counter else None
+        )
+        if ip_counter and ip_blocked_until and ip_blocked_until > now:
             raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many login attempts")
         account_ip_counter = self._get_counter(
             counter_type=CounterType.ACCOUNT_IP.value,
             counter_key=f"account_ip:{username}:{ip_address}",
         )
-        if account_ip_counter and account_ip_counter.blocked_until and account_ip_counter.blocked_until > now:
+        account_ip_blocked_until = coerce_utc_datetime(
+            account_ip_counter.blocked_until if account_ip_counter else None
+        )
+        if (
+            account_ip_counter
+            and account_ip_blocked_until
+            and account_ip_blocked_until > now
+        ):
             self._raise_login_failed()
 
     def _register_login_failure(
@@ -570,7 +605,8 @@ class AuthService:
                 last_failed_at=now,
             )
             self.db.add(counter)
-        if counter.first_failed_at + timedelta(minutes=window_minutes) < now:
+        first_failed_at = coerce_utc_datetime(counter.first_failed_at)
+        if first_failed_at is None or first_failed_at + timedelta(minutes=window_minutes) < now:
             counter.fail_count = 0
             counter.first_failed_at = now
             counter.blocked_until = None

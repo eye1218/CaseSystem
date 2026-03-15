@@ -9,6 +9,7 @@ import type {
   ManagedUserCreatePayload,
   ManagedUserDetailResponse,
   ManagedUserListResponse,
+  ManagedUserPasswordUpdatePayload,
   ManagedUserStatus,
   ManagedUserUpdatePayload,
   UserGroupCreatePayload,
@@ -36,6 +37,10 @@ export function updateUser(userId: string, payload: ManagedUserUpdatePayload) {
 
 export function updateUserStatus(userId: string, status: ManagedUserStatus, reason?: string | null) {
   return apiPost<ManagedUserDetailResponse>(`/api/v1/users/${userId}/status`, { status, reason });
+}
+
+export function updateUserPassword(userId: string, payload: ManagedUserPasswordUpdatePayload) {
+  return apiPost<ManagedUserDetailResponse>(`/api/v1/users/${userId}/password`, payload);
 }
 
 export function deleteUser(userId: string) {

@@ -23,6 +23,7 @@ import ReportsPage from "../pages/ReportsPage";
 import TasksPage from "../pages/TasksPage";
 import TaskTemplatesPage from "../pages/TaskTemplatesPage";
 import TemplateRenderingPage from "../pages/TemplateRenderingPage";
+import UsersPage from "../pages/UsersPage";
 
 export const router = createBrowserRouter([
   {
@@ -175,7 +176,11 @@ export const router = createBrowserRouter([
       },
       {
         path: "users",
-        element: <PlaceholderPage titleKey="nav.users" description="用户、角色与权限页保留入口，当前使用现有后端认证能力。" />
+        element: (
+          <RequireAdminRoute>
+            <UsersPage />
+          </RequireAdminRoute>
+        )
       },
       {
         path: "audit",

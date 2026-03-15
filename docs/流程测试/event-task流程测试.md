@@ -31,13 +31,13 @@
 
 | 项目 | 占位符 | 说明 |
 |---|---|---|
-| SMTP Host | `${SMTP_HOST}` | 邮件服务器地址 |
-| SMTP Port | `${SMTP_PORT}` | 邮件服务器端口 |
-| SMTP Username | `${SMTP_USERNAME}` | SMTP 登录账号 |
-| SMTP Password | `${SMTP_PASSWORD}` | SMTP 登录密码 |
-| SMTP 加密方式 | `${SMTP_SECURITY}` | 例如 SSL / TLS / STARTTLS / NONE |
-| 发件人邮箱 | `${SMTP_SENDER_EMAIL}` | 实际发件邮箱 |
-| 发件人名称 | `${SMTP_SENDER_NAME}` | 邮件显示名称 |
+| SMTP Host | `imap.qiye.163.com` | 邮件服务器地址 |
+| SMTP Port | `143` | 邮件服务器端口 |
+| SMTP Username | `damon.li@insightsec.cn` | SMTP 登录账号 |
+| SMTP Password | `Qk#xF8NZAkvfNpL6` | SMTP 登录密码 |
+| SMTP 加密方式 | `STARTTLS` | 例如 SSL / TLS / STARTTLS / NONE |
+| 发件人邮箱 | `damon.li@insightsec.cn` | 实际发件邮箱 |
+| 发件人名称 | `damon` | 邮件显示名称 |
 | 测试 SMTP 捕获器地址（如有） | `${SMTP_CAPTURE_URL}` | 如 MailHog / Mailpit 控制台地址 |
 
 ---
@@ -46,13 +46,12 @@
 
 | 项目 | 占位符 | 说明 |
 |---|---|---|
-| 单收件人邮箱 1 | `${RECEIVER_EMAIL_1}` | 用于单收件人测试 |
-| 单收件人邮箱 2 | `${RECEIVER_EMAIL_2}` | 用于多收件人测试 |
-| 单收件人邮箱 3 | `${RECEIVER_EMAIL_3}` | 用于多收件人测试 |
-| 角色 A 名称 | `${ROLE_NAME_A}` | 用于“角色人员作为收件人”测试 |
-| 角色 A 用户 1 邮箱 | `${ROLE_A_USER_EMAIL_1}` | 角色成员邮箱 |
-| 角色 A 用户 2 邮箱 | `${ROLE_A_USER_EMAIL_2}` | 角色成员邮箱 |
-| 当前处理人邮箱 | `${CURRENT_HANDLER_EMAIL}` | 用于“当前处理人作为收件人”测试 |
+| 单收件人邮箱 1 | `1218eye@gmail.com` | 用于单收件人测试 |
+| 单收件人邮箱 2 | `2077kkcc@gmail.com` | 用于多收件人测试 |
+| 单收件人邮箱 3 | `2077cat@gmail.com` | 用于多收件人测试 |
+| 角色 A 名称 | `renjie.he@insightsec.cn` | 用于“角色人员作为收件人”测试 |
+| 角色 A 用户 1 邮箱 | `korn.wang@insightsec.cn` | 角色成员邮箱 |
+| 当前处理人邮箱 | `1218eye@gmail.com` | 用于“当前处理人作为收件人”测试 |
 
 ---
 

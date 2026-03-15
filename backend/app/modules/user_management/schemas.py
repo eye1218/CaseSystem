@@ -66,6 +66,12 @@ class UserStatusUpdateRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=4000)
 
 
+class UserPasswordUpdateRequest(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    password: str = Field(min_length=8, max_length=256)
+
+
 class UserGroupSummaryResponse(BaseModel):
     id: str
     name: str
@@ -113,4 +119,3 @@ class UserGroupMembersUpdateRequest(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     user_ids: list[str] = Field(min_length=1)
-

@@ -63,8 +63,8 @@ class User(TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
     disabled_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
-    updated_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    updated_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     roles: Mapped[list[UserRole]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
@@ -105,7 +105,7 @@ class UserRole(TimestampMixin, Base):
     assigned_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    assigned_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    assigned_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     expires_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -279,8 +279,8 @@ class ReportTemplate(TimestampMixin, Base):
     content_type: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     storage_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
-    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
-    updated_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    updated_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     reports: Mapped[list["TicketReport"]] = relationship(back_populates="source_template")
 
@@ -306,7 +306,7 @@ class TicketReport(TimestampMixin, Base):
     content_type: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     storage_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
-    uploaded_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    uploaded_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     uploaded_by_name: Mapped[str] = mapped_column(String(128), nullable=False)
 
     source_template: Mapped[Optional[ReportTemplate]] = relationship(back_populates="reports")

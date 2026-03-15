@@ -157,6 +157,30 @@ def test_admin_can_create_list_get_update_disable_and_enable_user(client: TestCl
     assert enabled["disabled_at"] is None
     assert enabled["disabled_reason"] is None
 
+    password_response = client.post(
+        f"/api/v1/users/{user_id}/password",
+        json={"password": "OperatorAlphaNew123"},
+        headers=admin_headers(client),
+    )
+    assert password_response.status_code == 200, password_response.text
+
+    with additional_client(client.app) as relogin_client:
+        csrf = relogin_client.get("/auth/csrf").json()["csrf_token"]
+        old_login = relogin_client.post(
+            "/auth/login",
+            json={"username": "operator.alpha", "password": "OperatorAlpha123"},
+            headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+        )
+        assert old_login.status_code == 401
+
+        csrf = relogin_client.get("/auth/csrf").json()["csrf_token"]
+        new_login = relogin_client.post(
+            "/auth/login",
+            json={"username": "operator.alpha", "password": "OperatorAlphaNew123"},
+            headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+        )
+        assert new_login.status_code == 200, new_login.text
+
 
 def test_cannot_disable_or_delete_last_effective_admin(client: TestClient):
     login(client, "admin", "AdminPass123")
@@ -173,10 +197,10 @@ def test_cannot_disable_or_delete_last_effective_admin(client: TestClient):
         "/api/v1/users/user-admin",
         headers=admin_headers(client),
     )
-    assert delete_response.status_code == 409
+    assert delete_response.status_code == 405
 
 
-def test_delete_user_requires_no_business_participation_and_existing_target(
+def test_delete_user_is_not_available_in_current_stage(
     client: TestClient, db_session_factory
 ):
     login(client, "admin", "AdminPass123")
@@ -197,14 +221,7 @@ def test_delete_user_requires_no_business_participation_and_existing_target(
         db.commit()
 
     delete_clean = client.delete("/api/v1/users/user-clean-delete", headers=admin_headers(client))
-    assert delete_clean.status_code == 200, delete_clean.text
-    assert delete_clean.json()["message"] == "User deleted"
-
-    delete_participated = client.delete("/api/v1/users/user-customer", headers=admin_headers(client))
-    assert delete_participated.status_code == 409
-
-    delete_missing = client.delete("/api/v1/users/user-missing", headers=admin_headers(client))
-    assert delete_missing.status_code == 404
+    assert delete_clean.status_code == 405, delete_clean.text
 
 
 def test_group_management_and_membership_constraints(client: TestClient):

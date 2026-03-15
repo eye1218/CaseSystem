@@ -37,11 +37,11 @@ class Ticket(TimestampMixin, Base):
     main_status: Mapped[str] = mapped_column(String(32), nullable=False)
     sub_status: Mapped[str] = mapped_column(String(64), nullable=False, default="NONE")
     created_by: Mapped[str] = mapped_column(String(128), nullable=False)
-    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
-    customer_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    customer_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     assigned_to: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     assigned_to_user_id: Mapped[Optional[str]] = mapped_column(
-        String(36), nullable=True
+        String(64), nullable=True
     )
     current_pool_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     responsibility_level: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -70,7 +70,7 @@ class Ticket(TimestampMixin, Base):
     deleted_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    deleted_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    deleted_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     __mapper_args__ = {"version_id_col": version}
 
@@ -84,7 +84,7 @@ class TicketComment(TimestampMixin, Base):
     ticket_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("tickets.id", ondelete="CASCADE"), nullable=False
     )
-    actor_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    actor_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     actor_name: Mapped[str] = mapped_column(String(128), nullable=False)
     actor_role: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     visibility: Mapped[str] = mapped_column(
@@ -104,7 +104,7 @@ class TicketAction(Base):
         Integer, ForeignKey("tickets.id", ondelete="CASCADE"), nullable=False
     )
     action_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    actor_user_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    actor_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     actor_name: Mapped[str] = mapped_column(String(128), nullable=False)
     actor_role: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     visibility: Mapped[str] = mapped_column(
@@ -148,14 +148,14 @@ class TicketEscalation(Base):
     source_pool_code: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     source_assigned_to: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     source_assigned_to_user_id: Mapped[Optional[str]] = mapped_column(
-        String(36), nullable=True
+        String(64), nullable=True
     )
     source_sub_status: Mapped[str] = mapped_column(String(64), nullable=False, default="NONE")
-    confirmed_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    confirmed_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     confirmed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    rejected_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    rejected_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     rejected_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

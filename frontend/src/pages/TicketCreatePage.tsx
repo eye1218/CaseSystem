@@ -257,8 +257,8 @@ export default function TicketCreatePage() {
             title={language === "zh" ? "池子模式" : "Pool Mode"}
             body={
               language === "zh"
-                ? "工单在池中时当前处理人为空；被领取后当前池子清空。"
-                : "When a ticket is in a pool, assignee remains empty. Claiming it clears the pool."
+                ? "工单在池中时当前处理人为空；被领取后会填写当前处理人，但原池子仍保留。"
+                : "When a ticket is in a pool, the assignee stays empty. Claiming fills the assignee while keeping the original pool."
             }
           />
           <SummaryCard

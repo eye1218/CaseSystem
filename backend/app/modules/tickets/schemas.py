@@ -200,7 +200,7 @@ class TicketCreateRequest(BaseModel):
     priority: str = Field(min_length=2, max_length=8)
     risk_score: int = Field(ge=0, le=100)
     assignment_mode: str = Field(
-        default="unassigned", pattern="^(unassigned|self|pool)$"
+        default="unassigned", pattern="^(unassigned|pool)$"
     )
     pool_code: str | None = Field(default=None, min_length=2, max_length=32)
 

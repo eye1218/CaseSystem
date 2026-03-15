@@ -525,6 +525,7 @@ def list_bindable_task_templates(db: Session, actor: ActorContext) -> list[dict[
 
 
 def _build_ticket_context(ticket: Ticket) -> dict[str, object]:
+    public_source = ticket.source if ticket.source in {"API", "INTERNAL", "CUSTOMER"} else "API"
     return {
         "id": ticket.id,
         "title": ticket.title,
@@ -534,7 +535,7 @@ def _build_ticket_context(ticket: Ticket) -> dict[str, object]:
         "risk_score": ticket.risk_score,
         "status": ticket.main_status,
         "sub_status": ticket.sub_status,
-        "source": ticket.source,
+        "source": public_source,
         "assigned_to": ticket.assigned_to,
         "assigned_to_user_id": ticket.assigned_to_user_id,
         "created_at": ticket.created_at.isoformat(),

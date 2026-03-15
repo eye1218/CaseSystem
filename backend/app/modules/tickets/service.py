@@ -68,6 +68,11 @@ ROLE_TIER_ORDER = {
     RoleCode.T3.value: 3,
     RoleCode.ADMIN.value: 4,
 }
+PUBLIC_TICKET_SOURCES = {
+    "API",
+    "INTERNAL",
+    "CUSTOMER",
+}
 
 
 class TicketOperationError(Exception):
@@ -201,7 +206,7 @@ def _serialize_ticket(ticket: Ticket) -> dict[str, object]:
         "description": ticket.description,
         "category_id": ticket.category_id,
         "category_name": ticket.category_name,
-        "source": ticket.source,
+        "source": _public_ticket_source(ticket.source),
         "priority": ticket.priority,
         "risk_score": ticket.risk_score,
         "main_status": ticket.main_status,
@@ -249,6 +254,10 @@ def _default_responsibility_level(actor: ActorContext) -> str:
     return RoleCode.T1.value
 
 
+def _public_ticket_source(source: str) -> str:
+    return source if source in PUBLIC_TICKET_SOURCES else "API"
+
+
 def _sla_windows(priority: str) -> tuple[timedelta, timedelta]:
     window_map = {
         TicketPriority.P1.value: (timedelta(hours=1), timedelta(hours=4)),
@@ -265,6 +274,14 @@ def _sla_windows(priority: str) -> tuple[timedelta, timedelta]:
 def _resolve_assignment(
     actor: ActorContext, assignment_mode: str, pool_code: str | None
 ) -> tuple[str | None, str | None, str]:
+    if assignment_mode not in {"unassigned", "pool"}:
+        raise TicketOperationError(422, "Unsupported assignment mode")
+
+    if assignment_mode == "pool" and not pool_code:
+        raise TicketOperationError(
+            422, "A valid pool code is required when assignment_mode is `pool`"
+        )
+
     if pool_code and pool_code not in POOL_CODES:
         raise TicketOperationError(
             422, "A valid pool code is required when assignment_mode is `pool`"
@@ -296,6 +313,20 @@ def _tier_rank_for_pool(pool_code: str | None) -> int:
     return POOL_TIER_ORDER.get(pool_code, 0)
 
 
+def _role_can_operate_pool(role_code: str, pool_code: str | None) -> bool:
+    if pool_code is None:
+        return False
+    if role_code == RoleCode.CUSTOMER.value:
+        return False
+    if role_code == RoleCode.ADMIN.value:
+        return True
+    return _tier_rank_for_role(role_code) >= _tier_rank_for_pool(pool_code)
+
+
+def _role_codes_can_operate_pool(role_codes: list[str], pool_code: str | None) -> bool:
+    return any(_role_can_operate_pool(role_code, pool_code) for role_code in role_codes)
+
+
 def _next_pool_code(pool_code: str | None, responsibility_level: str) -> str | None:
     current_level = _pool_code_to_level(pool_code) or responsibility_level
     if current_level == RoleCode.T1.value:
@@ -324,13 +355,23 @@ def _highest_internal_role(role_codes: list[str]) -> str | None:
 
 
 def _actor_can_claim_pool(actor: ActorContext, pool_code: str | None) -> bool:
-    if pool_code is None:
-        return False
-    if actor.active_role == RoleCode.CUSTOMER.value:
-        return False
-    if actor.active_role == RoleCode.ADMIN.value:
-        return True
-    return _tier_rank_for_role(actor.active_role) >= _tier_rank_for_pool(pool_code)
+    return _role_can_operate_pool(actor.active_role, pool_code)
+
+
+def _ticket_operation_pool_code(ticket: Ticket | TicketSummaryResponse) -> str | None:
+    return ticket.current_pool_code or _level_to_pool_code(ticket.responsibility_level)
+
+
+def _actor_can_operate_ticket(
+    actor: ActorContext, ticket: Ticket | TicketSummaryResponse
+) -> bool:
+    return _role_can_operate_pool(actor.active_role, _ticket_operation_pool_code(ticket))
+
+
+def _assert_actor_can_operate_ticket(actor: ActorContext, ticket: Ticket) -> None:
+    _assert_internal_actor(actor)
+    if not _actor_can_operate_ticket(actor, ticket):
+        raise TicketOperationError(403, "Current role cannot operate on this ticket")
 
 
 def _assert_valid_ownership_state(ticket: Ticket) -> None:
@@ -446,8 +487,12 @@ def _available_actions(
             actions.append("reopen")
         return actions
 
-    actions.append("edit")
-    if not has_pending_escalation:
+    can_operate_ticket = _actor_can_operate_ticket(actor, ticket)
+
+    if can_operate_ticket:
+        actions.append("edit")
+
+    if can_operate_ticket and not has_pending_escalation:
         if (
             ticket.current_pool_code
             and ticket.assigned_to_user_id is None
@@ -466,23 +511,23 @@ def _available_actions(
         if actor.active_role == RoleCode.ADMIN.value:
             actions.append("assign")
 
-    if ticket.main_status in {
+    if can_operate_ticket and ticket.main_status in {
         TicketMainStatus.WAITING_RESPONSE.value,
         TicketMainStatus.RESPONSE_TIMEOUT.value,
     }:
         actions.append("respond")
 
-    if ticket.main_status in {
+    if can_operate_ticket and ticket.main_status in {
         TicketMainStatus.IN_PROGRESS.value,
         TicketMainStatus.RESPONSE_TIMEOUT.value,
         TicketMainStatus.RESOLUTION_TIMEOUT.value,
     }:
         actions.append("resolve")
 
-    if ticket.main_status == TicketMainStatus.RESOLVED.value:
+    if can_operate_ticket and ticket.main_status == TicketMainStatus.RESOLVED.value:
         actions.append("close")
 
-    if ticket.main_status == TicketMainStatus.CLOSED.value:
+    if can_operate_ticket and ticket.main_status == TicketMainStatus.CLOSED.value:
         actions.append("reopen")
 
     return actions
@@ -518,7 +563,7 @@ def _permission_scope(actor: ActorContext) -> dict[str, object]:
 
     return {
         "current_role": actor.active_role,
-        "page_scope": "可查看当前角色可访问的完整工单详情",
+        "page_scope": "内部人员可查看全部工单，操作权限按当前角色对应的池子层级控制",
         "comment_scope": "可查看公开评论与内部协作评论",
         "hidden_fields": [],
     }
@@ -975,10 +1020,10 @@ def update_ticket_detail(
     priority: str | None = None,
     risk_score: int | None = None,
 ) -> dict[str, object]:
-    _assert_internal_actor(actor)
     ticket = get_ticket(db, actor, ticket_id)
     if ticket is None:
         raise TicketOperationError(404, "Ticket not found")
+    _assert_actor_can_operate_ticket(actor, ticket)
     _assert_ticket_version(ticket, expected_version)
 
     changed = False
@@ -1034,6 +1079,15 @@ def execute_ticket_action(
     ticket = get_ticket(db, actor, ticket_id)
     if ticket is None:
         raise TicketOperationError(404, "Ticket not found")
+    if actor.active_role != RoleCode.CUSTOMER.value and action in {
+        "claim",
+        "move_to_pool",
+        "respond",
+        "resolve",
+        "close",
+        "reopen",
+    }:
+        _assert_actor_can_operate_ticket(actor, ticket)
     _assert_ticket_version(ticket, expected_version)
     if action in {"claim", "move_to_pool"}:
         _assert_valid_ownership_state(ticket)
@@ -1215,7 +1269,11 @@ def assign_ticket(
     _assert_ticket_version(ticket, expected_version)
     _assert_valid_ownership_state(ticket)
     _assert_no_pending_escalation(db, ticket.id)
-    target_user, _, highest_role = _get_active_internal_user(db, target_user_id)
+    target_user, target_role_codes, highest_role = _get_active_internal_user(db, target_user_id)
+    if not _role_codes_can_operate_pool(
+        target_role_codes, _ticket_operation_pool_code(ticket)
+    ):
+        raise TicketOperationError(422, "Target user cannot operate on the current ticket pool")
 
     now = utcnow()
     ticket.assigned_to = target_user.display_name
@@ -1253,7 +1311,7 @@ def assign_ticket(
 
 
 def _assert_can_initiate_escalation(actor: ActorContext, ticket: Ticket) -> None:
-    _assert_internal_actor(actor)
+    _assert_actor_can_operate_ticket(actor, ticket)
     _assert_valid_ownership_state(ticket)
     if ticket.assigned_to_user_id is None:
         if not ticket.current_pool_code or not _actor_can_claim_pool(actor, ticket.current_pool_code):
@@ -1322,7 +1380,11 @@ def escalate_ticket_to_user(
     _assert_can_initiate_escalation(actor, ticket)
     _assert_no_pending_escalation(db, ticket.id)
 
-    target_user, _, highest_role = _get_active_internal_user(db, target_user_id)
+    target_user, target_role_codes, highest_role = _get_active_internal_user(db, target_user_id)
+    if not _role_codes_can_operate_pool(
+        target_role_codes, _ticket_operation_pool_code(ticket)
+    ):
+        raise TicketOperationError(422, "Target user cannot operate on the current ticket pool")
     now = utcnow()
     escalation = TicketEscalation(
         ticket_id=ticket.id,
@@ -1401,6 +1463,7 @@ def accept_ticket_escalation(
         ticket = _get_ticket_by_id(db, escalation.ticket_id)
     if ticket is None:
         raise TicketOperationError(404, "Ticket not found")
+    _assert_actor_can_operate_ticket(actor, ticket)
 
     now = utcnow()
     ticket.assigned_to = actor.display_name

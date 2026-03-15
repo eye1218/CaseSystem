@@ -73,15 +73,19 @@ class AuthService:
         referer = request.headers.get("referer")
         if not cookie_token or not header_token or cookie_token != header_token:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF validation failed")
-        if not origin and not referer:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Origin or Referer is required")
-        if origin and origin not in self.settings.allowed_origins:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Origin not allowed")
-        if referer and not any(referer.startswith(allowed) for allowed in self.settings.allowed_origins):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Referer not allowed")
+        if not self._allows_all_origins():
+            if not origin and not referer:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Origin or Referer is required")
+            if origin and origin not in self.settings.allowed_origins:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Origin not allowed")
+            if referer and not any(referer.startswith(allowed) for allowed in self.settings.allowed_origins):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Referer not allowed")
         csrf_row = self.db.scalar(select(CsrfToken).where(CsrfToken.token_hash == hash_opaque_token(cookie_token)))
         if csrf_row is None or csrf_row.expires_at <= utcnow():
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF token expired")
+
+    def _allows_all_origins(self) -> bool:
+        return "*" in self.settings.allowed_origins
 
     def login(self, *, request: Request, response: Response, username: str, password: str) -> AuthResponse:
         ip_address = self._resolve_ip_address(request)

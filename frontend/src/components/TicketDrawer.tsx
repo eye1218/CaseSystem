@@ -313,7 +313,7 @@ export default function TicketDrawer({ ticket, open, onClose }: TicketDrawerProp
                       </span>
                     </Field>
 
-                    <Field label={language === "zh" ? "告警来源" : "Source"}>
+                    <Field label={language === "zh" ? "工单来源" : "Source"}>
                       <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-200">
                         <Radio className="h-3 w-3" />
                         {ticket.source}

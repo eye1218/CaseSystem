@@ -344,7 +344,6 @@ def test_ticket_create_matches_enabled_rules_and_enqueues_dispatch_jobs(client, 
             "category_id": "network",
             "priority": "P1",
             "risk_score": 92,
-            "assignment_mode": "self",
         },
         headers={"X-CSRF-Token": ticket_csrf, "Origin": "https://testserver"},
     )
@@ -513,7 +512,6 @@ def test_response_timeout_rules_dispatch_on_due_signal(client, db_session_factor
             "category_id": "intrusion",
             "priority": "P1",
             "risk_score": 95,
-            "assignment_mode": "self",
         },
         headers={"X-CSRF-Token": ticket_csrf, "Origin": "https://testserver"},
     )
@@ -549,7 +547,6 @@ def test_reopen_recreates_pending_timeout_events(client, db_session_factory):
             "category_id": "network",
             "priority": "P3",
             "risk_score": 50,
-            "assignment_mode": "self",
         },
         headers={"X-CSRF-Token": ticket_csrf, "Origin": "https://testserver"},
     )

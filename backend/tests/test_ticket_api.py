@@ -182,7 +182,6 @@ def test_customer_can_create_ticket_and_see_global_ticket_list(client):
             "category_id": "network",
             "priority": "P3",
             "risk_score": 45,
-            "assignment_mode": "self",
         },
         headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
     )
@@ -196,6 +195,26 @@ def test_customer_can_create_ticket_and_see_global_ticket_list(client):
     listing = client.get("/api/v1/tickets")
     assert listing.status_code == 200
     assert created_id in {item["id"] for item in listing.json()["items"]}
+
+
+def test_ticket_create_rejects_unsupported_assignment_mode(client):
+    login(client, "admin", "AdminPass123")
+    csrf = issue_csrf(client)
+
+    response = client.post(
+        "/api/v1/tickets",
+        json={
+            "title": "不支持的建单模式",
+            "description": "文档要求建单必须进入池子，不能直接归属个人。",
+            "category_id": "network",
+            "priority": "P3",
+            "risk_score": 40,
+            "assignment_mode": "self",
+        },
+        headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+    )
+
+    assert response.status_code == 422, response.text
 
 
 def test_ticket_live_response_returns_only_volatile_sections(client, db_session_factory):

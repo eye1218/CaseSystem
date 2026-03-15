@@ -144,7 +144,6 @@ def create_ticket(client) -> int:
             "category_id": "network",
             "priority": "P1",
             "risk_score": 91,
-            "assignment_mode": "self",
         },
         headers=auth_headers(client),
     )

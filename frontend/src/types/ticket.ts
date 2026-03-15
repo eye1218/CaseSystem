@@ -215,7 +215,7 @@ export interface TicketCreatePayload {
   category_id: string;
   priority: TicketPriority;
   risk_score: number;
-  assignment_mode?: "unassigned" | "self" | "pool";
+  assignment_mode?: "unassigned" | "pool";
   pool_code?: string;
 }
 

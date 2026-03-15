@@ -244,6 +244,43 @@ def test_t1_user_can_claim_t1_pool_ticket(client, db_session_factory):
     assert payload["ticket"]["current_pool_code"] == "T1_POOL"
 
 
+def test_internal_user_can_view_higher_pool_ticket_but_cannot_operate_it(client, db_session_factory):
+    create_ticket_record(
+        db_session_factory,
+        ticket_id=200094,
+        pool_code="T3_POOL",
+        assigned_to_user_id=None,
+        assigned_to=None,
+        responsibility_level="T3",
+    )
+
+    login(client, "analyst", "AnalystPass123")
+    switch_role(client, "T1")
+
+    summary = client.get("/api/v1/tickets/200094")
+    assert summary.status_code == 200, summary.text
+
+    detail = client.get("/api/v1/tickets/200094/detail")
+    assert detail.status_code == 200, detail.text
+    assert "edit" not in detail.json()["available_actions"]
+    assert "respond" not in detail.json()["available_actions"]
+
+    csrf = issue_csrf(client)
+    respond = client.post(
+        "/api/v1/tickets/200094/actions/respond",
+        json={"version": 1},
+        headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+    )
+    assert respond.status_code == 403, respond.text
+
+    update = client.patch(
+        "/api/v1/tickets/200094",
+        json={"version": 1, "title": "无权修改"},
+        headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+    )
+    assert update.status_code == 403, update.text
+
+
 def test_t2_user_can_claim_t1_and_t2_pool_tickets(client, db_session_factory):
     create_ticket_record(
         db_session_factory,
@@ -281,6 +318,60 @@ def test_t2_user_can_claim_t1_and_t2_pool_tickets(client, db_session_factory):
     )
     assert claim_t2.status_code == 200, claim_t2.text
     assert claim_t2.json()["ticket"]["assigned_to_user_id"] == "user-analyst"
+
+
+def test_t2_user_can_respond_t1_and_t2_pool_tickets_but_not_t3(client, db_session_factory):
+    create_ticket_record(
+        db_session_factory,
+        ticket_id=200104,
+        pool_code="T1_POOL",
+        assigned_to_user_id=None,
+        assigned_to=None,
+        responsibility_level="T1",
+    )
+    create_ticket_record(
+        db_session_factory,
+        ticket_id=200105,
+        pool_code="T2_POOL",
+        assigned_to_user_id=None,
+        assigned_to=None,
+        responsibility_level="T2",
+    )
+    create_ticket_record(
+        db_session_factory,
+        ticket_id=200106,
+        pool_code="T3_POOL",
+        assigned_to_user_id=None,
+        assigned_to=None,
+        responsibility_level="T3",
+    )
+
+    login(client, "analyst", "AnalystPass123")
+    switch_role(client, "T2")
+    csrf = issue_csrf(client)
+
+    respond_t1 = client.post(
+        "/api/v1/tickets/200104/actions/respond",
+        json={"version": 1},
+        headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+    )
+    assert respond_t1.status_code == 200, respond_t1.text
+    assert respond_t1.json()["ticket"]["main_status"] == "IN_PROGRESS"
+
+    respond_t2 = client.post(
+        "/api/v1/tickets/200105/actions/respond",
+        json={"version": 1},
+        headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+    )
+    assert respond_t2.status_code == 200, respond_t2.text
+    assert respond_t2.json()["ticket"]["main_status"] == "IN_PROGRESS"
+
+    forbidden = client.post(
+        "/api/v1/tickets/200106/actions/respond",
+        json={"version": 1},
+        headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+    )
+    assert forbidden.status_code == 403, forbidden.text
 
 
 def test_t3_user_can_claim_t1_t2_t3_pool_tickets(client, db_session_factory):
@@ -469,6 +560,29 @@ def test_non_admin_cannot_assign_ticket(client, db_session_factory):
     assert response.status_code == 403, response.text
 
 
+def test_admin_cannot_assign_ticket_to_user_without_required_pool_tier(client, db_session_factory):
+    create_ticket_record(
+        db_session_factory,
+        ticket_id=200114,
+        pool_code="T3_POOL",
+        assigned_to_user_id=None,
+        assigned_to=None,
+        responsibility_level="T3",
+    )
+
+    login(client, "admin", "AdminPass123")
+    switch_role(client, "ADMIN")
+    csrf = issue_csrf(client)
+
+    response = client.post(
+        "/api/v1/tickets/200114/assign",
+        json={"version": 1, "target_user_id": "user-analyst"},
+        headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+    )
+
+    assert response.status_code == 422, response.text
+
+
 def test_pool_escalation_moves_ticket_to_next_pool(client, db_session_factory):
     create_ticket_record(
         db_session_factory,
@@ -630,6 +744,34 @@ def test_directed_escalation_creates_pending_request_and_actionable_notification
     assert items[0]["action_required"] is True
     assert items[0]["action_status"] == "pending"
     assert items[0]["action_payload"]["escalation_id"] == payload["pending_escalation"]["id"]
+
+
+def test_directed_escalation_rejects_target_without_required_pool_tier(client, db_session_factory):
+    create_internal_user(
+        db_session_factory,
+        user_id="user-specialist-t3",
+        username="specialist_t3",
+        role_codes=["T3"],
+    )
+    create_ticket_record(
+        db_session_factory,
+        ticket_id=200132,
+        pool_code="T3_POOL",
+        assigned_to_user_id=None,
+        assigned_to=None,
+        responsibility_level="T3",
+    )
+
+    login(client, "specialist_t3", "Pass123456")
+    csrf = issue_csrf(client)
+
+    response = client.post(
+        "/api/v1/tickets/200132/escalate-to-user",
+        json={"version": 1, "target_user_id": "user-analyst"},
+        headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+    )
+
+    assert response.status_code == 422, response.text
 
 
 def test_target_user_accepts_directed_escalation_and_non_target_is_rejected(client, db_session_factory):

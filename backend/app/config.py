@@ -31,16 +31,7 @@ class Settings(BaseSettings):
     smtp_timeout_seconds: float = 10.0
     webhook_timeout_seconds: float = 10.0
     allowed_origins: list[str] = Field(
-        default_factory=lambda: [
-            "https://testserver",
-            "https://localhost",
-            "https://127.0.0.1",
-            "http://localhost:8010",
-            "http://127.0.0.1:8010",
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-            "http://192.168.2.170:8010",
-        ]
+        default_factory=lambda: ["*"]
     )
     throttle_sleep_enabled: bool = False
     celery_broker_url: str = "memory://"

@@ -130,7 +130,6 @@ def test_comment_bumps_ticket_version_and_stale_action_is_rejected(client):
             "category_id": "network",
             "priority": "P3",
             "risk_score": 40,
-            "assignment_mode": "self",
         },
         headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
     )

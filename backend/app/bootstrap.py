@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.enums import RoleCode
-from app.models import Role, User, UserRole
+from app.models import ApiToken, Role, User, UserRole
 from app.modules.knowledge.service import seed_knowledge
-from app.security import hash_password
+from app.security import generate_refresh_token, hash_opaque_token, hash_password
 from app.ticketing import seed_tickets
+
+logger = logging.getLogger(__name__)
 
 
 SYSTEM_ROLES = {
@@ -57,6 +61,7 @@ def seed_roles(db: Session) -> None:
         db.add(Role(code=code, **payload))
     db.commit()
     seed_demo_users(db)
+    seed_api_tokens(db)
     seed_tickets(db)
     seed_knowledge(db)
 
@@ -92,5 +97,36 @@ def seed_demo_users(db: Session) -> None:
                     is_primary=role_code == payload["primary_role"],
                 )
             )
+
+    db.commit()
+
+
+def seed_api_tokens(db: Session) -> None:
+    existing_user_ids = set(
+        db.scalars(select(ApiToken.user_id)).all()
+    )
+
+    for payload in DEMO_USERS:
+        user_id = payload["id"]
+        if user_id in existing_user_ids:
+            continue
+        primary_role = payload["primary_role"]
+        raw_token = "csk_" + generate_refresh_token()
+        db.add(
+            ApiToken(
+                user_id=user_id,
+                name="Default API Token",
+                token_hash=hash_opaque_token(raw_token),
+                active_role_code=primary_role,
+                status="active",
+                created_by="bootstrap",
+            )
+        )
+        logger.info(
+            "Demo API token for user '%s' (%s): %s",
+            payload["username"],
+            primary_role,
+            raw_token,
+        )
 
     db.commit()

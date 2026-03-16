@@ -1,4 +1,4 @@
-import { Bell, ChevronDown, Languages, LogOut, Moon, Sun, User } from "lucide-react";
+import { Bell, ChevronDown, KeyRound, Languages, LogOut, Moon, Sun, User } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 
@@ -19,7 +19,8 @@ const routeTitleMap: Record<string, string> = {
   "/configuration": "nav.configuration",
   "/users": "nav.users",
   "/audit": "nav.audit",
-  "/recycle-bin": "nav.recycle"
+  "/recycle-bin": "nav.recycle",
+  "/api-tokens": "user.apiTokens"
 };
 
 export default function AppHeader() {
@@ -157,6 +158,13 @@ export default function AppHeader() {
               >
                 <User className="h-4 w-4" />
                 {t("user.profile")}
+              </Link>
+              <Link
+                to="/api-tokens"
+                className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                <KeyRound className="h-4 w-4" />
+                {t("user.apiTokens")}
               </Link>
               <button
                 onClick={() => void logout()}

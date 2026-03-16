@@ -25,6 +25,7 @@ import TasksPage from "../pages/TasksPage";
 import TaskTemplatesPage from "../pages/TaskTemplatesPage";
 import TemplateRenderingPage from "../pages/TemplateRenderingPage";
 import UsersPage from "../pages/UsersPage";
+import ApiTokensPage from "../pages/ApiTokensPage";
 
 export const router = createBrowserRouter([
   {
@@ -198,6 +199,10 @@ export const router = createBrowserRouter([
       {
         path: "recycle-bin",
         element: <PlaceholderPage titleKey="nav.recycle" description="回收站前端入口已保留，后续接工单软删除列表。" />
+      },
+      {
+        path: "api-tokens",
+        element: <ApiTokensPage />
       }
     ]
   }

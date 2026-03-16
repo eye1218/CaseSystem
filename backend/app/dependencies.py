@@ -32,4 +32,8 @@ def require_csrf(
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> None:
     del response
+    # Bearer API token requests are self-authenticating — skip CSRF check
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer ") and auth_header.removeprefix("Bearer ").strip().startswith("csk_"):
+        return
     auth_service.validate_csrf(request)

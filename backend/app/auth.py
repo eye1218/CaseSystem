@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.config import Settings
 from app.enums import CounterType, RefreshTokenStatus, RoleCode, SecurityEventType, SessionStatus, UserStatus
-from app.models import AuthLoginCounter, AuthSecurityEvent, AuthSession, CsrfToken, RefreshToken, User, UserRole, UserRoleSession
+from app.models import ApiToken, AuthLoginCounter, AuthSecurityEvent, AuthSession, CsrfToken, RefreshToken, User, UserRole, UserRoleSession
 from app.policies import ObjectScope, has_object_access, has_permission
 from app.schemas import AuthResponse, AuthenticatedUser
 from app.security import (
@@ -173,6 +173,11 @@ class AuthService:
         return AuthResponse(user=actor.to_user_schema(), session_id=session_record.id)
 
     def authenticate_request(self, request: Request) -> ActorContext:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            raw_token = auth_header.removeprefix("Bearer ").strip()
+            if raw_token.startswith("csk_"):
+                return self.authenticate_api_token(raw_token)
         token = request.cookies.get(self._access_cookie_name)
         if not token:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
@@ -182,6 +187,66 @@ class AuthService:
     def authenticate_token(self, token: str) -> ActorContext:
         claims = self._decode_access_token_or_error(token)
         return self._authenticate_claims(claims)
+
+    def authenticate_api_token(self, raw_token: str) -> ActorContext:
+        token_hash = hash_opaque_token(raw_token)
+        token_row = self.db.scalar(select(ApiToken).where(ApiToken.token_hash == token_hash))
+        if token_row is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API token")
+        if token_row.status != "active":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API token revoked")
+        expires_at = coerce_utc_datetime(token_row.expires_at)
+        if expires_at is not None and expires_at <= utcnow():
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API token expired")
+        user = self.db.scalar(select(User).where(User.id == token_row.user_id))
+        if user is None or user.status != UserStatus.ACTIVE.value:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User is not active")
+        token_row.last_used_at = utcnow()
+        self.db.commit()
+        return self._build_actor_context(
+            session_id=f"token:{token_row.id}",
+            user=user,
+            active_role=token_row.active_role_code,
+        )
+
+    def create_api_token(
+        self, *, user_id: str, name: str, active_role_code: str, created_by: str
+    ) -> tuple[str, ApiToken]:
+        user_role = self.db.scalar(
+            select(UserRole).where(
+                UserRole.user_id == user_id,
+                UserRole.role_code == active_role_code,
+                UserRole.is_active.is_(True),
+            )
+        )
+        if user_role is None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Role is not assigned to the user")
+        raw_token = "csk_" + generate_refresh_token()
+        token_row = ApiToken(
+            user_id=user_id,
+            name=name,
+            token_hash=hash_opaque_token(raw_token),
+            active_role_code=active_role_code,
+            status="active",
+            created_by=created_by,
+        )
+        self.db.add(token_row)
+        self.db.commit()
+        self.db.refresh(token_row)
+        return raw_token, token_row
+
+    def revoke_api_token(self, *, token_id: str, actor: ActorContext) -> None:
+        token_row = self.db.scalar(select(ApiToken).where(ApiToken.id == token_id))
+        if token_row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Token not found")
+        if token_row.user_id != actor.user_id and not has_permission(actor.active_role, "config:manage"):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+        token_row.status = "revoked"
+        token_row.revoked_at = utcnow()
+        self.db.commit()
+
+    def list_api_tokens(self, *, user_id: str) -> list[ApiToken]:
+        return list(self.db.scalars(select(ApiToken).where(ApiToken.user_id == user_id)).all())
 
     def issue_socket_token(self, actor: ActorContext) -> str:
         user = self.db.scalar(select(User).where(User.id == actor.user_id))

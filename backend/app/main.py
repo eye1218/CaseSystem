@@ -30,6 +30,10 @@ from .report_routes import report_router
 from .reporting import seed_reporting
 from .schemas import (
     AdminOverviewResponse,
+    ApiTokenCreate,
+    ApiTokenCreatedResponse,
+    ApiTokenListResponse,
+    ApiTokenResponse,
     AuthenticatedUser,
     AuthResponse,
     CsrfTokenResponse,
@@ -211,6 +215,96 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         auth_service=Depends(get_auth_service),
     ) -> SocketTokenResponse:
         return SocketTokenResponse(token=auth_service.issue_socket_token(actor))
+
+    # --- API Token self-management ---
+
+    @app.get("/auth/tokens", response_model=ApiTokenListResponse)
+    def list_my_tokens(
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        auth_service=Depends(get_auth_service),
+    ) -> ApiTokenListResponse:
+        tokens = auth_service.list_api_tokens(user_id=actor.user_id)
+        return ApiTokenListResponse(items=[ApiTokenResponse.model_validate(t) for t in tokens])
+
+    @app.post(
+        "/auth/tokens",
+        response_model=ApiTokenCreatedResponse,
+        dependencies=[Depends(require_csrf)],
+    )
+    def create_my_token(
+        payload: ApiTokenCreate,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        auth_service=Depends(get_auth_service),
+    ) -> ApiTokenCreatedResponse:
+        raw_token, token_row = auth_service.create_api_token(
+            user_id=actor.user_id,
+            name=payload.name,
+            active_role_code=payload.active_role_code,
+            created_by=actor.username,
+        )
+        response_data = ApiTokenResponse.model_validate(token_row)
+        return ApiTokenCreatedResponse(**response_data.model_dump(), raw_token=raw_token)
+
+    @app.delete(
+        "/auth/tokens/{token_id}",
+        response_model=MessageResponse,
+        dependencies=[Depends(require_csrf)],
+    )
+    def revoke_my_token(
+        token_id: str,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        auth_service=Depends(get_auth_service),
+    ) -> MessageResponse:
+        auth_service.revoke_api_token(token_id=token_id, actor=actor)
+        return MessageResponse(message="Token revoked")
+
+    # --- Admin token management ---
+
+    @app.get("/api/v1/users/{user_id}/tokens", response_model=ApiTokenListResponse)
+    def list_user_tokens(
+        user_id: str,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        auth_service=Depends(get_auth_service),
+    ) -> ApiTokenListResponse:
+        auth_service.require_permission(actor, "config:manage")
+        tokens = auth_service.list_api_tokens(user_id=user_id)
+        return ApiTokenListResponse(items=[ApiTokenResponse.model_validate(t) for t in tokens])
+
+    @app.post(
+        "/api/v1/users/{user_id}/tokens",
+        response_model=ApiTokenCreatedResponse,
+        dependencies=[Depends(require_csrf)],
+    )
+    def create_user_token(
+        user_id: str,
+        payload: ApiTokenCreate,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        auth_service=Depends(get_auth_service),
+    ) -> ApiTokenCreatedResponse:
+        auth_service.require_permission(actor, "config:manage")
+        raw_token, token_row = auth_service.create_api_token(
+            user_id=user_id,
+            name=payload.name,
+            active_role_code=payload.active_role_code,
+            created_by=actor.username,
+        )
+        response_data = ApiTokenResponse.model_validate(token_row)
+        return ApiTokenCreatedResponse(**response_data.model_dump(), raw_token=raw_token)
+
+    @app.delete(
+        "/api/v1/users/{user_id}/tokens/{token_id}",
+        response_model=MessageResponse,
+        dependencies=[Depends(require_csrf)],
+    )
+    def revoke_user_token(
+        user_id: str,
+        token_id: str,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        auth_service=Depends(get_auth_service),
+    ) -> MessageResponse:
+        auth_service.require_permission(actor, "config:manage")
+        auth_service.revoke_api_token(token_id=token_id, actor=actor)
+        return MessageResponse(message="Token revoked")
 
     @app.get("/admin/overview", response_model=AdminOverviewResponse)
     def admin_overview(

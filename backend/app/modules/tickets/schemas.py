@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -84,6 +85,9 @@ class ReportTemplateReferenceResponse(BaseModel):
 class TicketReportResponse(BaseModel):
     id: str
     ticket_id: int
+    ticket_category_id: str
+    ticket_category_name: str
+    ticket_created_at: datetime
     title: str
     report_type: str
     note: str | None
@@ -162,6 +166,32 @@ class TicketActivityItemResponse(BaseModel):
     is_system: bool = False
 
 
+class TicketAlarmLookupItemResponse(BaseModel):
+    sort_order: int
+    alarm_id: str
+    found: bool
+    row_count: int
+    rows: list[dict[str, Any]]
+
+
+class TicketAlarmLookupResponse(BaseModel):
+    ticket_id: int
+    source_id: str | None
+    source_name: str | None
+    table_name: str | None
+    match_field: str | None
+    alarm_ids: list[str]
+    missing_alarm_ids: list[str]
+    total_rows: int
+    items: list[TicketAlarmLookupItemResponse]
+
+
+class TicketContextResponse(BaseModel):
+    ticket_id: int
+    content_markdown: str | None
+    updated_at: datetime | None
+
+
 class TicketDetailResponse(BaseModel):
     ticket: TicketSummaryResponse
     available_actions: list[str]
@@ -170,6 +200,8 @@ class TicketDetailResponse(BaseModel):
     related_knowledge: list[KnowledgeArticleSummaryResponse]
     report_templates: list[ReportTemplateSummaryResponse]
     reports: list[TicketReportResponse]
+    alarm_ids: list[str]
+    context_markdown: str | None
     raw_alerts: list[TicketAlertResponse]
     siem_context_markdown: LocalizedTextResponse
     external_context: TicketExternalContextResponse
@@ -203,6 +235,8 @@ class TicketCreateRequest(BaseModel):
         default="unassigned", pattern="^(unassigned|pool)$"
     )
     pool_code: str | None = Field(default=None, min_length=2, max_length=32)
+    alarm_ids: list[str] = Field(default_factory=list, max_length=500)
+    context_markdown: str | None = None
 
 
 class TicketUpdateRequest(BaseModel):
@@ -212,6 +246,8 @@ class TicketUpdateRequest(BaseModel):
     category_id: str | None = Field(default=None, min_length=1, max_length=64)
     priority: str | None = Field(default=None, min_length=2, max_length=8)
     risk_score: int | None = Field(default=None, ge=0, le=100)
+    alarm_ids: list[str] | None = Field(default=None, max_length=500)
+    context_markdown: str | None = None
 
 
 class TicketActionCommandRequest(BaseModel):

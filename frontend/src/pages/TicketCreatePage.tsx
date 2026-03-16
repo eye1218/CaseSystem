@@ -15,6 +15,15 @@ interface FormState {
   priority: TicketPriority;
   risk_score: string;
   pool_code: string;
+  alarm_ids_text: string;
+  context_markdown: string;
+}
+
+function parseAlarmIds(value: string): string[] {
+  return value
+    .split(/[\n,;]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
 }
 
 const categories = [
@@ -37,7 +46,9 @@ export default function TicketCreatePage() {
     category_id: "intrusion",
     priority: "P2",
     risk_score: "60",
-    pool_code: "T1_POOL"
+    pool_code: "T1_POOL",
+    alarm_ids_text: "",
+    context_markdown: ""
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -57,7 +68,9 @@ export default function TicketCreatePage() {
         category_id: form.category_id,
         priority: form.priority,
         risk_score: Number(form.risk_score),
-        pool_code: isCustomer ? undefined : form.pool_code
+        pool_code: isCustomer ? undefined : form.pool_code,
+        alarm_ids: parseAlarmIds(form.alarm_ids_text),
+        context_markdown: form.context_markdown.trim() || null
       });
       navigate(`/tickets/${payload.ticket.id}`);
     } catch (submitError) {
@@ -203,6 +216,34 @@ export default function TicketCreatePage() {
                 </select>
               </Field>
             )}
+
+            <Field label={language === "zh" ? "关联告警 ID" : "Related Alert IDs"} className="md:col-span-2">
+              <textarea
+                rows={4}
+                value={form.alarm_ids_text}
+                onChange={(event) => setForm((current) => ({ ...current, alarm_ids_text: event.target.value }))}
+                placeholder={
+                  language === "zh"
+                    ? "每行一个告警 ID，或使用逗号分隔。"
+                    : "One alert ID per line, or separate with commas."
+                }
+                className="ticket-input resize-none"
+              />
+            </Field>
+
+            <Field label={language === "zh" ? "工单上下文（Markdown）" : "Ticket Context (Markdown)"} className="md:col-span-2">
+              <textarea
+                rows={8}
+                value={form.context_markdown}
+                onChange={(event) => setForm((current) => ({ ...current, context_markdown: event.target.value }))}
+                placeholder={
+                  language === "zh"
+                    ? "输入本工单的扩展上下文，支持 Markdown。"
+                    : "Enter ticket context in Markdown."
+                }
+                className="ticket-input resize-none"
+              />
+            </Field>
           </div>
 
           <div className="mt-6 flex items-center justify-between gap-3 border-t border-slate-200 pt-5 dark:border-slate-800">

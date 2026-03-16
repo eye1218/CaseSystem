@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+from app.modules.alert_sources.models import AlertSourceConfig
 from app.modules.tickets.cache import (
     InMemoryTicketCacheBackend,
     set_ticket_cache_backend,
 )
-from app.modules.tickets.models import Ticket, TicketComment
+from app.modules.tickets.models import Ticket, TicketAlarmRelation, TicketComment, TicketContext
 
 from .conftest import issue_csrf, login
+
+
+def switch_role(client, role_code: str) -> None:
+    csrf = client.cookies.get("XSRF-TOKEN")
+    response = client.post(
+        "/auth/switch-role",
+        json={"active_role_code": role_code},
+        headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+    )
+    assert response.status_code == 200, response.text
 
 
 def test_internal_user_can_list_tickets_and_filter(client):
@@ -195,6 +206,152 @@ def test_customer_can_create_ticket_and_see_global_ticket_list(client):
     listing = client.get("/api/v1/tickets")
     assert listing.status_code == 200
     assert created_id in {item["id"] for item in listing.json()["items"]}
+
+
+def test_ticket_create_persists_alarm_ids_and_context(client, db_session_factory):
+    login(client, "admin", "AdminPass123")
+    csrf = issue_csrf(client)
+
+    response = client.post(
+        "/api/v1/tickets",
+        json={
+            "title": "关联告警与上下文创建",
+            "description": "创建时带上关联告警和 Markdown 上下文。",
+            "category_id": "network",
+            "priority": "P2",
+            "risk_score": 62,
+            "alarm_ids": ["alert-001", "missing-002", "alert-003"],
+            "context_markdown": "# 研判上下文\n\n- 来源：人工录入",
+        },
+        headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    ticket_id = payload["ticket"]["id"]
+    assert payload["alarm_ids"] == ["alert-001", "missing-002", "alert-003"]
+    assert payload["context_markdown"] == "# 研判上下文\n\n- 来源：人工录入"
+
+    with db_session_factory() as db:
+        relations = list(
+            db.query(TicketAlarmRelation)
+            .filter(TicketAlarmRelation.ticket_id == ticket_id)
+            .order_by(TicketAlarmRelation.sort_order.asc())
+            .all()
+        )
+        assert [item.alarm_id for item in relations] == ["alert-001", "missing-002", "alert-003"]
+        assert [item.sort_order for item in relations] == [0, 1, 2]
+        context = db.get(TicketContext, ticket_id)
+        assert context is not None
+        assert context.content_markdown == "# 研判上下文\n\n- 来源：人工录入"
+
+
+def test_ticket_alert_lookup_preserves_order_and_returns_missing_items(
+    client,
+    db_session_factory,
+    monkeypatch,
+):
+    with db_session_factory() as db:
+        db.add(
+            AlertSourceConfig(
+                name="test-alert-source",
+                host="10.20.100.35",
+                port=9030,
+                username="viewer",
+                password="secret",
+                database_name="db_scis",
+                table_name="alert",
+                ticket_match_field="alert_id",
+                status="ENABLED",
+                latest_test_status="SUCCESS",
+                created_by_name="tester",
+                updated_by_name="tester",
+            )
+        )
+        db.add_all(
+            [
+                TicketAlarmRelation(ticket_id=100177, sort_order=0, alarm_id="alert-a"),
+                TicketAlarmRelation(ticket_id=100177, sort_order=1, alarm_id="missing-b"),
+                TicketAlarmRelation(ticket_id=100177, sort_order=2, alarm_id="alert-c"),
+            ]
+        )
+        db.add(
+            TicketContext(
+                ticket_id=100177,
+                content_markdown="## 已存储上下文\n\n内容",
+                created_by_user_id="user-admin",
+                updated_by_user_id="user-admin",
+            )
+        )
+        db.commit()
+
+    monkeypatch.setattr(
+        "app.modules.tickets.service._query_alert_rows",
+        lambda _source, _alarm_ids: [
+            {"alert_id": "alert-a", "severity": "high", "vendor": "Fortinet"},
+            {"alert_id": "alert-c", "severity": "low", "vendor": "EDR"},
+        ],
+    )
+
+    login(client, "admin", "AdminPass123")
+
+    alert_response = client.get("/api/v1/tickets/100177/alerts")
+    assert alert_response.status_code == 200, alert_response.text
+    alert_payload = alert_response.json()
+    assert alert_payload["alarm_ids"] == ["alert-a", "missing-b", "alert-c"]
+    assert alert_payload["missing_alarm_ids"] == ["missing-b"]
+    assert [item["alarm_id"] for item in alert_payload["items"]] == ["alert-a", "missing-b", "alert-c"]
+    assert [item["found"] for item in alert_payload["items"]] == [True, False, True]
+
+    context_response = client.get("/api/v1/tickets/100177/context")
+    assert context_response.status_code == 200, context_response.text
+    assert context_response.json()["content_markdown"] == "## 已存储上下文\n\n内容"
+
+
+def test_ticket_update_can_replace_alarm_ids_and_clear_context(client, db_session_factory):
+    login(client, "admin", "AdminPass123")
+    csrf = issue_csrf(client)
+
+    create_response = client.post(
+        "/api/v1/tickets",
+        json={
+            "title": "待更新的扩展工单",
+            "description": "初始包含告警和上下文。",
+            "category_id": "intrusion",
+            "priority": "P3",
+            "risk_score": 40,
+            "alarm_ids": ["init-1", "init-2"],
+            "context_markdown": "initial context",
+        },
+        headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+    )
+    assert create_response.status_code == 200, create_response.text
+    created = create_response.json()
+    ticket_id = created["ticket"]["id"]
+
+    update_response = client.patch(
+        f"/api/v1/tickets/{ticket_id}",
+        json={
+            "version": created["ticket"]["version"],
+            "alarm_ids": ["next-1"],
+            "context_markdown": "",
+        },
+        headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+    )
+    assert update_response.status_code == 200, update_response.text
+    updated = update_response.json()
+    assert updated["alarm_ids"] == ["next-1"]
+    assert updated["context_markdown"] is None
+
+    with db_session_factory() as db:
+        relations = list(
+            db.query(TicketAlarmRelation)
+            .filter(TicketAlarmRelation.ticket_id == ticket_id)
+            .order_by(TicketAlarmRelation.sort_order.asc())
+            .all()
+        )
+        assert [item.alarm_id for item in relations] == ["next-1"]
+        assert db.get(TicketContext, ticket_id) is None
 
 
 def test_ticket_create_rejects_unsupported_assignment_mode(client):

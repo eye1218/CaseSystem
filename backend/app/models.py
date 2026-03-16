@@ -312,9 +312,17 @@ class TicketReport(TimestampMixin, Base):
     source_template: Mapped[Optional[ReportTemplate]] = relationship(back_populates="reports")
 
 
-from .modules.tickets.models import Ticket, TicketAction, TicketComment, TicketEscalation
+from .modules.tickets.models import (
+    Ticket,
+    TicketAction,
+    TicketAlarmRelation,
+    TicketComment,
+    TicketContext,
+    TicketEscalation,
+)
 from .modules.events.models import Event, EventBinding, EventRule, EventRuleBinding
 from .modules.knowledge.models import KnowledgeArticle, KnowledgeArticleLike
 from .modules.realtime.models import UserNotification
 from .modules.tasks.models import TaskExecutionLog, TaskInstance, TaskTemplate
 from .modules.mail_senders.models import MailSenderAuditLog, MailSenderConfig
+from .modules.alert_sources.models import AlertSourceAuditLog, AlertSourceConfig

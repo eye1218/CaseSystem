@@ -3,9 +3,9 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional, cast as type_cast
+from typing import Any, Optional, cast as type_cast
 
-from sqlalchemy import String, and_, cast, func, or_, select
+from sqlalchemy import String, and_, cast, delete, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.sql.elements import ColumnElement
@@ -22,6 +22,13 @@ from ...enums import (
 from ...models import User, UserRole
 from ...reporting import list_reports_for_ticket_detail, list_templates_for_ticket_detail
 from ...security import utcnow
+from ..alert_sources.service import (
+    AlertSourceOperationError,
+    _describe_external_error,
+    _get_source_or_error,
+    _query_alert_rows,
+    get_preferred_enabled_alert_source,
+)
 from ..events.service import (
     cancel_pending_ticket_events,
     clear_registered_immediate_dispatches,
@@ -36,7 +43,14 @@ from ..realtime.service import (
     resolve_notification_action,
 )
 from .cache import get_ticket_cache, get_ticket_cache_ttl_seconds
-from .models import Ticket, TicketAction, TicketComment, TicketEscalation
+from .models import (
+    Ticket,
+    TicketAction,
+    TicketAlarmRelation,
+    TicketComment,
+    TicketContext,
+    TicketEscalation,
+)
 from .schemas import TicketSummaryResponse
 from .seed_data import CATEGORY_NAMES, POOL_CODES
 from .support_data import (
@@ -90,6 +104,29 @@ class TicketOperationError(Exception):
 
 TICKET_VERSION_CONFLICT_MESSAGE = "数据已变更，请刷新后重试"
 logger = logging.getLogger(__name__)
+
+
+def _normalize_alarm_ids(alarm_ids: list[str] | None) -> list[str]:
+    if alarm_ids is None:
+        return []
+    normalized: list[str] = []
+    if len(alarm_ids) > 500:
+        raise TicketOperationError(422, "At most 500 alarm IDs are allowed")
+    for index, value in enumerate(alarm_ids):
+        item = value.strip()
+        if not item:
+            raise TicketOperationError(422, f"Alarm ID at position {index + 1} is required")
+        if len(item) > 128:
+            raise TicketOperationError(422, f"Alarm ID at position {index + 1} exceeds 128 characters")
+        normalized.append(item)
+    return normalized
+
+
+def _normalize_context_markdown(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 def _base_conditions(actor: ActorContext) -> list[ColumnElement[bool]]:
@@ -238,6 +275,81 @@ def _serialize_ticket(ticket: Ticket) -> dict[str, object]:
         "created_at": ticket.created_at.isoformat(),
         "updated_at": ticket.updated_at.isoformat(),
     }
+
+
+def _list_ticket_alarm_ids(db: Session, ticket_id: int) -> list[str]:
+    rows = list(
+        db.scalars(
+            select(TicketAlarmRelation)
+            .where(TicketAlarmRelation.ticket_id == ticket_id)
+            .order_by(TicketAlarmRelation.sort_order.asc(), TicketAlarmRelation.created_at.asc())
+        ).all()
+    )
+    return [row.alarm_id for row in rows]
+
+
+def _get_ticket_context_row(db: Session, ticket_id: int) -> TicketContext | None:
+    return db.get(TicketContext, ticket_id)
+
+
+def _get_ticket_context_markdown(db: Session, ticket_id: int) -> str | None:
+    context_row = _get_ticket_context_row(db, ticket_id)
+    return context_row.content_markdown if context_row is not None else None
+
+
+def _replace_ticket_alarm_relations(
+    db: Session,
+    *,
+    ticket_id: int,
+    actor: ActorContext,
+    alarm_ids: list[str],
+) -> None:
+    db.execute(
+        delete(TicketAlarmRelation).where(TicketAlarmRelation.ticket_id == ticket_id)
+    )
+    now = utcnow()
+    for index, alarm_id in enumerate(alarm_ids):
+        db.add(
+            TicketAlarmRelation(
+                ticket_id=ticket_id,
+                sort_order=index,
+                alarm_id=alarm_id,
+                created_at=now,
+                created_by_user_id=actor.user_id,
+            )
+        )
+
+
+def _upsert_ticket_context(
+    db: Session,
+    *,
+    ticket_id: int,
+    actor: ActorContext,
+    context_markdown: str | None,
+) -> None:
+    existing = _get_ticket_context_row(db, ticket_id)
+    if context_markdown is None:
+        if existing is not None:
+            db.delete(existing)
+        return
+
+    now = utcnow()
+    if existing is None:
+        db.add(
+            TicketContext(
+                ticket_id=ticket_id,
+                content_markdown=context_markdown,
+                created_at=now,
+                updated_at=now,
+                created_by_user_id=actor.user_id,
+                updated_by_user_id=actor.user_id,
+            )
+        )
+        return
+
+    existing.content_markdown = context_markdown
+    existing.updated_at = now
+    existing.updated_by_user_id = actor.user_id
 
 
 def _summary_cache_entry(ticket: Ticket) -> dict[str, object]:
@@ -678,6 +790,8 @@ def _detail_base_entry(db: Session, ticket: Ticket) -> dict[str, object]:
         },
         "pending_escalation": _serialize_escalation(pending_escalation),
         "activity_feed": _activity_feed_raw(db, ticket.id),
+        "alarm_ids": _list_ticket_alarm_ids(db, ticket.id),
+        "context_markdown": _get_ticket_context_markdown(db, ticket.id),
         "raw_alerts": _raw_alerts(ticket),
         "siem_context_markdown": _context_markdown(ticket),
         "external_context": _external_context(ticket),
@@ -712,6 +826,8 @@ def _detail_response_from_base(
             actor,
             ticket_id=int(ticket_payload["id"]),
         ),
+        "alarm_ids": base["alarm_ids"],
+        "context_markdown": base["context_markdown"],
         "raw_alerts": base["raw_alerts"],
         "siem_context_markdown": base["siem_context_markdown"],
         "external_context": base["external_context"],
@@ -828,6 +944,108 @@ def get_ticket_live(
     return _live_response_from_base(base, actor)
 
 
+def get_ticket_alert_lookup(
+    db: Session,
+    actor: ActorContext,
+    ticket_id: int,
+    *,
+    source_id: str | None = None,
+) -> dict[str, object]:
+    ticket = get_ticket(db, actor, ticket_id)
+    if ticket is None:
+        raise TicketOperationError(404, "Ticket not found")
+
+    alarm_ids = _list_ticket_alarm_ids(db, ticket.id)
+    if not alarm_ids:
+        return {
+            "ticket_id": ticket.id,
+            "source_id": None,
+            "source_name": None,
+            "table_name": None,
+            "match_field": None,
+            "alarm_ids": [],
+            "missing_alarm_ids": [],
+            "total_rows": 0,
+            "items": [],
+        }
+
+    try:
+        source = _get_source_or_error(db, source_id) if source_id else get_preferred_enabled_alert_source(db)
+    except AlertSourceOperationError as exc:
+        raise TicketOperationError(exc.status_code, str(exc.detail)) from exc
+
+    if source is None:
+        raise TicketOperationError(422, "No enabled alert source configured")
+    if source.status != "ENABLED":
+        raise TicketOperationError(422, "Alert source must be enabled before querying")
+
+    unique_alarm_ids: list[str] = []
+    seen_alarm_ids: set[str] = set()
+    for alarm_id in alarm_ids:
+        if alarm_id in seen_alarm_ids:
+            continue
+        seen_alarm_ids.add(alarm_id)
+        unique_alarm_ids.append(alarm_id)
+
+    try:
+        rows = _query_alert_rows(source, unique_alarm_ids)
+    except Exception as exc:
+        raise TicketOperationError(502, _describe_external_error(exc)) from exc
+
+    grouped_rows: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        key = str(row.get(source.ticket_match_field))
+        grouped_rows.setdefault(key, []).append(row)
+
+    items: list[dict[str, object]] = []
+    missing_alarm_ids: list[str] = []
+    seen_missing: set[str] = set()
+    for sort_order, alarm_id in enumerate(alarm_ids):
+        matched_rows = grouped_rows.get(alarm_id, [])
+        found = len(matched_rows) > 0
+        if not found and alarm_id not in seen_missing:
+            seen_missing.add(alarm_id)
+            missing_alarm_ids.append(alarm_id)
+        items.append(
+            {
+                "sort_order": sort_order,
+                "alarm_id": alarm_id,
+                "found": found,
+                "row_count": len(matched_rows),
+                "rows": matched_rows,
+            }
+        )
+
+    return {
+        "ticket_id": ticket.id,
+        "source_id": source.id,
+        "source_name": source.name,
+        "table_name": source.table_name,
+        "match_field": source.ticket_match_field,
+        "alarm_ids": alarm_ids,
+        "missing_alarm_ids": missing_alarm_ids,
+        "total_rows": len(rows),
+        "items": items,
+    }
+
+
+def get_ticket_context_entry(
+    db: Session,
+    actor: ActorContext,
+    ticket_id: int,
+) -> dict[str, object]:
+    ticket = get_ticket(db, actor, ticket_id)
+    if ticket is None:
+        raise TicketOperationError(404, "Ticket not found")
+
+    context_row = _get_ticket_context_row(db, ticket.id)
+    return {
+        "ticket_id": ticket.id,
+        "content_markdown": context_row.content_markdown if context_row else None,
+        "updated_at": context_row.updated_at if context_row else None,
+    }
+
+
 def create_ticket(
     db: Session,
     actor: ActorContext,
@@ -839,10 +1057,14 @@ def create_ticket(
     risk_score: int,
     assignment_mode: str = "unassigned",
     pool_code: str | None = None,
+    alarm_ids: list[str] | None = None,
+    context_markdown: str | None = None,
 ) -> dict[str, object]:
     if category_id not in CATEGORY_NAMES:
         raise TicketOperationError(422, "Unsupported ticket category")
 
+    normalized_alarm_ids = _normalize_alarm_ids(alarm_ids)
+    normalized_context_markdown = _normalize_context_markdown(context_markdown)
     response_window, resolution_window = _sla_windows(priority)
     assigned_to, current_pool_code, responsibility_level = _resolve_assignment(
         actor, assignment_mode, pool_code
@@ -876,6 +1098,18 @@ def create_ticket(
     )
     db.add(ticket)
     db.flush()
+    _replace_ticket_alarm_relations(
+        db,
+        ticket_id=ticket.id,
+        actor=actor,
+        alarm_ids=normalized_alarm_ids,
+    )
+    _upsert_ticket_context(
+        db,
+        ticket_id=ticket.id,
+        actor=actor,
+        context_markdown=normalized_context_markdown,
+    )
 
     _record_action(
         db,
@@ -1029,6 +1263,8 @@ def update_ticket_detail(
     category_id: str | None = None,
     priority: str | None = None,
     risk_score: int | None = None,
+    alarm_ids: list[str] | None = None,
+    context_markdown: str | None = None,
 ) -> dict[str, object]:
     ticket = get_ticket(db, actor, ticket_id)
     if ticket is None:
@@ -1054,6 +1290,26 @@ def update_ticket_detail(
     if risk_score is not None:
         ticket.risk_score = risk_score
         changed = True
+    if alarm_ids is not None:
+        normalized_alarm_ids = _normalize_alarm_ids(alarm_ids)
+        if normalized_alarm_ids != _list_ticket_alarm_ids(db, ticket.id):
+            _replace_ticket_alarm_relations(
+                db,
+                ticket_id=ticket.id,
+                actor=actor,
+                alarm_ids=normalized_alarm_ids,
+            )
+            changed = True
+    if context_markdown is not None:
+        normalized_context_markdown = _normalize_context_markdown(context_markdown)
+        if normalized_context_markdown != _get_ticket_context_markdown(db, ticket.id):
+            _upsert_ticket_context(
+                db,
+                ticket_id=ticket.id,
+                actor=actor,
+                context_markdown=normalized_context_markdown,
+            )
+            changed = True
 
     if changed:
         ticket.updated_at = changed_at

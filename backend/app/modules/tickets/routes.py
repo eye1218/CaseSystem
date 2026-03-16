@@ -12,9 +12,11 @@ from ...dependencies import require_auth, require_csrf
 from .schemas import (
     InternalTicketUserListResponse,
     InternalTicketUserResponse,
+    TicketAlarmLookupResponse,
     TicketAssignRequest,
     TicketActionCommandRequest,
     TicketCommentCreateRequest,
+    TicketContextResponse,
     TicketCreateRequest,
     TicketDetailResponse,
     TicketEscalateToPoolRequest,
@@ -36,6 +38,8 @@ from .service import (
     execute_ticket_action,
     get_report_download,
     get_ticket,
+    get_ticket_alert_lookup,
+    get_ticket_context_entry,
     get_ticket_detail,
     get_ticket_live,
     get_ticket_summary,
@@ -128,6 +132,8 @@ def ticket_create(
             risk_score=payload.risk_score,
             assignment_mode=payload.assignment_mode,
             pool_code=payload.pool_code,
+            alarm_ids=payload.alarm_ids,
+            context_markdown=payload.context_markdown,
         )
     except TicketOperationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -175,6 +181,39 @@ def ticket_detail_rich(
     if detail is None:
         raise HTTPException(status_code=404, detail="Ticket not found")
     return TicketDetailResponse.model_validate(detail)
+
+
+@ticket_router.get(
+    "/api/v1/tickets/{ticket_id}/alerts",
+    response_model=TicketAlarmLookupResponse,
+)
+def ticket_alert_lookup(
+    ticket_id: int,
+    actor: Annotated[ActorContext, Depends(require_auth)],
+    db: Annotated[Session, Depends(get_db)],
+    source_id: str | None = None,
+) -> TicketAlarmLookupResponse:
+    try:
+        payload = get_ticket_alert_lookup(db, actor, ticket_id, source_id=source_id)
+    except TicketOperationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return TicketAlarmLookupResponse.model_validate(payload)
+
+
+@ticket_router.get(
+    "/api/v1/tickets/{ticket_id}/context",
+    response_model=TicketContextResponse,
+)
+def ticket_context_lookup(
+    ticket_id: int,
+    actor: Annotated[ActorContext, Depends(require_auth)],
+    db: Annotated[Session, Depends(get_db)],
+) -> TicketContextResponse:
+    try:
+        payload = get_ticket_context_entry(db, actor, ticket_id)
+    except TicketOperationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return TicketContextResponse.model_validate(payload)
 
 
 @ticket_router.get("/api/v1/tickets/{ticket_id}/live", response_model=TicketLiveResponse)
@@ -236,6 +275,8 @@ def ticket_update(
             category_id=payload.category_id,
             priority=payload.priority,
             risk_score=payload.risk_score,
+            alarm_ids=payload.alarm_ids,
+            context_markdown=payload.context_markdown,
         )
     except TicketOperationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

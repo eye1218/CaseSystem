@@ -2,10 +2,12 @@ import { apiFetch, apiPatch, apiPost } from "./client";
 import { buildTicketListPath, type TicketQueryParams } from "../features/tickets/utils";
 import type {
   InternalTicketUserListResponse,
+  TicketAlarmLookupResponse,
   TicketAssignPayload,
   TicketActionPayload,
   TicketCreatePayload,
   TicketCommentPayload,
+  TicketContextResponse,
   TicketDetail,
   TicketEscalateToPoolPayload,
   TicketEscalateToUserPayload,
@@ -38,6 +40,15 @@ export function getTicketDetail(ticketId: string) {
 
 export function getTicketLive(ticketId: string) {
   return apiFetch<TicketLive>(`/api/v1/tickets/${ticketId}/live`);
+}
+
+export function getTicketAlerts(ticketId: string, sourceId?: string) {
+  const suffix = sourceId ? `?source_id=${encodeURIComponent(sourceId)}` : "";
+  return apiFetch<TicketAlarmLookupResponse>(`/api/v1/tickets/${ticketId}/alerts${suffix}`);
+}
+
+export function getTicketContext(ticketId: string) {
+  return apiFetch<TicketContextResponse>(`/api/v1/tickets/${ticketId}/context`);
 }
 
 export function addTicketComment(ticketId: string, payload: TicketCommentPayload) {

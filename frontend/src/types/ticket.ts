@@ -139,6 +139,32 @@ export interface TicketActivityItem {
   is_system: boolean;
 }
 
+export interface TicketAlarmLookupItem {
+  sort_order: number;
+  alarm_id: string;
+  found: boolean;
+  row_count: number;
+  rows: Array<Record<string, unknown>>;
+}
+
+export interface TicketAlarmLookupResponse {
+  ticket_id: number;
+  source_id: string | null;
+  source_name: string | null;
+  table_name: string | null;
+  match_field: string | null;
+  alarm_ids: string[];
+  missing_alarm_ids: string[];
+  total_rows: number;
+  items: TicketAlarmLookupItem[];
+}
+
+export interface TicketContextResponse {
+  ticket_id: number;
+  content_markdown: string | null;
+  updated_at: string | null;
+}
+
 export interface TicketDetail {
   ticket: TicketSummary;
   available_actions: string[];
@@ -147,6 +173,8 @@ export interface TicketDetail {
   related_knowledge: KnowledgeArticleSummary[];
   report_templates: ReportTemplateSummary[];
   reports: ReportSummary[];
+  alarm_ids: string[];
+  context_markdown: string | null;
   raw_alerts: TicketAlert[];
   siem_context_markdown: LocalizedText;
   external_context: TicketExternalContext;
@@ -177,6 +205,8 @@ export interface TicketUpdatePayload {
   category_id?: string;
   priority?: TicketPriority;
   risk_score?: number;
+  alarm_ids?: string[];
+  context_markdown?: string | null;
 }
 
 export interface TicketActionPayload {
@@ -217,6 +247,8 @@ export interface TicketCreatePayload {
   risk_score: number;
   assignment_mode?: "unassigned" | "pool";
   pool_code?: string;
+  alarm_ids?: string[];
+  context_markdown?: string | null;
 }
 
 

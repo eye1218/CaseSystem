@@ -71,6 +71,15 @@ def _ensure_runtime_schema() -> None:
 
 def init_db() -> None:
     from app import models  # noqa: F401
+    from app.modules.alert_sources import models as alert_source_models  # noqa: F401
+    from app.modules.events import models as event_models  # noqa: F401
+    from app.modules.knowledge import models as knowledge_models  # noqa: F401
+    from app.modules.mail_senders import models as mail_sender_models  # noqa: F401
+    from app.modules.realtime import models as realtime_models  # noqa: F401
+    from app.modules.tasks import models as task_models  # noqa: F401
+    from app.modules.templates import models as template_models  # noqa: F401
+    from app.modules.tickets import models as ticket_models  # noqa: F401
+    from app.modules.user_management import models as user_management_models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _ensure_runtime_schema()

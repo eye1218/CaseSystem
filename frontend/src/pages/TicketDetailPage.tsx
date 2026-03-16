@@ -28,6 +28,8 @@ import {
   assignTicket,
   escalateTicketToPool,
   escalateTicketToUser,
+  getTicketAlerts,
+  getTicketContext,
   getTicketDetail,
   getTicketLive,
   listInternalTicketUsers,
@@ -45,7 +47,9 @@ import { useRealtime } from "../contexts/RealtimeContext";
 import type { KnowledgeArticleDetail, KnowledgeArticleSummary } from "../types/knowledge";
 import type {
   InternalTicketUser,
+  TicketAlarmLookupResponse,
   TicketActivityItem,
+  TicketContextResponse,
   TicketDetail,
   TicketLive,
   TicketPriority,
@@ -61,6 +65,20 @@ interface EditFormState {
   category_id: string;
   priority: TicketPriority;
   risk_score: string;
+  alarm_ids_text: string;
+  context_markdown: string;
+}
+
+interface ToastState {
+  id: number;
+  message: string;
+}
+
+function parseAlarmIds(value: string): string[] {
+  return value
+    .split(/[\n,;]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
 }
 
 const categoryOptions = ticketCategoryOptions.map((item) => ({
@@ -357,12 +375,21 @@ export default function TicketDetailPage() {
   const [knowledgeDrawerLoading, setKnowledgeDrawerLoading] = useState(false);
   const [knowledgeDrawerError, setKnowledgeDrawerError] = useState("");
   const [knowledgeDrawerArticle, setKnowledgeDrawerArticle] = useState<KnowledgeArticleDetail | null>(null);
+  const [alertLookup, setAlertLookup] = useState<TicketAlarmLookupResponse | null>(null);
+  const [alertLookupLoading, setAlertLookupLoading] = useState(false);
+  const [alertLookupError, setAlertLookupError] = useState("");
+  const [ticketContext, setTicketContext] = useState<TicketContextResponse | null>(null);
+  const [ticketContextLoading, setTicketContextLoading] = useState(false);
+  const [ticketContextError, setTicketContextError] = useState("");
+  const [toast, setToast] = useState<ToastState | null>(null);
   const [form, setForm] = useState<EditFormState>({
     title: "",
     description: "",
     category_id: "intrusion",
     priority: "P2",
-    risk_score: "50"
+    risk_score: "50",
+    alarm_ids_text: "",
+    context_markdown: ""
   });
 
   const loadDetail = async (ticketId: string) => {
@@ -375,6 +402,41 @@ export default function TicketDetailPage() {
       setError(loadError instanceof Error ? loadError.message : "Failed to load ticket");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadAlertLookup = async (ticketId: string) => {
+    setAlertLookupLoading(true);
+    setAlertLookupError("");
+    try {
+      const payload = await getTicketAlerts(ticketId);
+      setAlertLookup(payload);
+      if (payload.missing_alarm_ids.length > 0) {
+        setToast({
+          id: Date.now(),
+          message:
+            language === "zh"
+              ? `有 ${payload.missing_alarm_ids.length} 个关联告警不存在：${payload.missing_alarm_ids.join("、")}`
+              : `${payload.missing_alarm_ids.length} related alerts were not found: ${payload.missing_alarm_ids.join(", ")}`
+        });
+      }
+    } catch (loadError) {
+      setAlertLookupError(loadError instanceof Error ? loadError.message : "Failed to load related alerts");
+    } finally {
+      setAlertLookupLoading(false);
+    }
+  };
+
+  const loadTicketContext = async (ticketId: string) => {
+    setTicketContextLoading(true);
+    setTicketContextError("");
+    try {
+      const payload = await getTicketContext(ticketId);
+      setTicketContext(payload);
+    } catch (loadError) {
+      setTicketContextError(loadError instanceof Error ? loadError.message : "Failed to load ticket context");
+    } finally {
+      setTicketContextLoading(false);
     }
   };
 
@@ -400,11 +462,23 @@ export default function TicketDetailPage() {
     setKnowledgeDrawerLoading(false);
     setKnowledgeDrawerError("");
     setKnowledgeDrawerArticle(null);
+    setAlertLookup(null);
+    setAlertLookupError("");
+    setTicketContext(null);
+    setTicketContextError("");
     setOwnershipAction(null);
     setOwnershipTargetId("");
     setOwnershipNote("");
     setOwnershipError("");
   }, [id]);
+
+  useEffect(() => {
+    if (!toast) {
+      return;
+    }
+    const timer = window.setTimeout(() => setToast(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
 
   useEffect(() => {
     if (!id || !lastTicketEvent) {
@@ -449,10 +523,26 @@ export default function TicketDetailPage() {
       description: detail.ticket.description,
       category_id: detail.ticket.category_id,
       priority: detail.ticket.priority,
-      risk_score: String(detail.ticket.risk_score)
+      risk_score: String(detail.ticket.risk_score),
+      alarm_ids_text: detail.alarm_ids.join("\n"),
+      context_markdown: detail.context_markdown ?? ""
     });
     setCommentVisibility(user?.active_role === "CUSTOMER" ? "PUBLIC" : "INTERNAL");
   }, [detail, user?.active_role]);
+
+  useEffect(() => {
+    if (!id || !detail || tab !== "alerts" || alertLookupLoading || alertLookup !== null || Boolean(alertLookupError)) {
+      return;
+    }
+    void loadAlertLookup(id);
+  }, [alertLookup, alertLookupError, alertLookupLoading, detail, id, tab]);
+
+  useEffect(() => {
+    if (!id || !detail || tab !== "context" || ticketContextLoading || ticketContext !== null || Boolean(ticketContextError)) {
+      return;
+    }
+    void loadTicketContext(id);
+  }, [detail, id, tab, ticketContext, ticketContextError, ticketContextLoading]);
 
   const ticket = detail?.ticket;
 
@@ -573,9 +663,15 @@ export default function TicketDetailPage() {
         description: form.description,
         category_id: form.category_id,
         priority: form.priority,
-        risk_score: Number(form.risk_score)
+        risk_score: Number(form.risk_score),
+        alarm_ids: parseAlarmIds(form.alarm_ids_text),
+        context_markdown: form.context_markdown
       });
       setDetail(payload);
+      setAlertLookup(null);
+      setAlertLookupError("");
+      setTicketContext(null);
+      setTicketContextError("");
       setEditing(false);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Update failed");
@@ -615,9 +711,16 @@ export default function TicketDetailPage() {
     return <div className="p-6 text-sm text-slate-500 dark:text-slate-400">{error || "Ticket not found."}</div>;
   }
 
-  const localizedContext = detail.siem_context_markdown[language];
   const summaryText = detail.responsibility_summary[language];
   const availableActions = actionOrder.filter((action) => detail.available_actions.includes(action));
+  const visibleContext = ticketContext?.content_markdown ?? detail.context_markdown;
+  const alertColumns = Array.from(
+    new Set(
+      (alertLookup?.items ?? []).flatMap((item) =>
+        item.rows.flatMap((row) => Object.keys(row)),
+      ),
+    ),
+  );
 
   return (
     <div className="flex h-full items-stretch p-6">
@@ -754,6 +857,26 @@ export default function TicketDetailPage() {
                       rows={5}
                       value={form.description}
                       onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900"
+                    />
+                  </label>
+                  <label className="block text-sm text-slate-600 dark:text-slate-300 md:col-span-2">
+                    <span className="mb-2 block font-medium">{language === "zh" ? "关联告警 ID" : "Related Alert IDs"}</span>
+                    <textarea
+                      rows={4}
+                      value={form.alarm_ids_text}
+                      onChange={(event) => setForm((current) => ({ ...current, alarm_ids_text: event.target.value }))}
+                      placeholder={language === "zh" ? "每行一个告警 ID，或使用逗号分隔。" : "One alert ID per line, or separate with commas."}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900"
+                    />
+                  </label>
+                  <label className="block text-sm text-slate-600 dark:text-slate-300 md:col-span-2">
+                    <span className="mb-2 block font-medium">{language === "zh" ? "工单上下文（Markdown）" : "Ticket Context (Markdown)"}</span>
+                    <textarea
+                      rows={8}
+                      value={form.context_markdown}
+                      onChange={(event) => setForm((current) => ({ ...current, context_markdown: event.target.value }))}
+                      placeholder={language === "zh" ? "支持 Markdown，留空表示清空。" : "Markdown supported. Leave empty to clear."}
                       className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900"
                     />
                   </label>
@@ -900,55 +1023,127 @@ export default function TicketDetailPage() {
 
             {tab === "alerts" && (
               <div className="overflow-auto">
-                {detail.raw_alerts.length === 0 ? (
-                  <div className="px-5 py-10 text-center text-sm text-slate-500 dark:text-slate-400">{language === "zh" ? "当前工单没有原始告警列表。" : "No raw alerts for this ticket."}</div>
+                {alertLookupLoading ? (
+                  <div className="px-5 py-10 text-center text-sm text-slate-500 dark:text-slate-400">
+                    {language === "zh" ? "正在查询关联告警..." : "Loading related alerts..."}
+                  </div>
+                ) : alertLookupError ? (
+                  <div className="space-y-3 px-5 py-8 text-center">
+                    <div className="text-sm text-rose-600 dark:text-rose-300">{alertLookupError}</div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (id) {
+                          void loadAlertLookup(id);
+                        }
+                      }}
+                      className="rounded-xl border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                    >
+                      {language === "zh" ? "重试" : "Retry"}
+                    </button>
+                  </div>
+                ) : !alertLookup || alertLookup.alarm_ids.length === 0 ? (
+                  <div className="px-5 py-10 text-center text-sm text-slate-500 dark:text-slate-400">
+                    {language === "zh" ? "当前工单没有配置关联告警 ID。" : "No related alert IDs are configured for this ticket."}
+                  </div>
                 ) : (
-                  <table className="min-w-full border-collapse text-sm">
-                    <thead className="bg-slate-50 dark:bg-slate-950">
-                      <tr className="border-b border-slate-200 dark:border-slate-800">
-                        {["#", language === "zh" ? "时间" : "Time", "Rule", language === "zh" ? "源 IP:端口" : "Src IP:Port", language === "zh" ? "目标主机" : "Destination", language === "zh" ? "用户名" : "User", language === "zh" ? "结果" : "Result"].map((label) => (
-                          <th key={label} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
-                            {label}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                      {detail.raw_alerts.map((alert) => (
-                        <tr key={`${alert.rule_id}-${alert.seq}`} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                          <td className="px-4 py-3 font-mono text-xs text-slate-400">{alert.seq}</td>
-                          <td className="px-4 py-3 font-mono text-xs text-slate-600 dark:text-slate-300">{alert.time}</td>
-                          <td className="px-4 py-3">
-                            <span className="rounded border border-red-200 bg-red-50 px-2 py-1 text-xs font-semibold text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
-                              {alert.rule_id}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 font-mono text-xs text-slate-600 dark:text-slate-300">
-                            {alert.src_ip}:{alert.src_port}
-                          </td>
-                          <td className="px-4 py-3 text-slate-700 dark:text-slate-200">{alert.dst_host}</td>
-                          <td className="px-4 py-3 font-mono text-xs text-slate-700 dark:text-slate-200">{alert.user}</td>
-                          <td className="px-4 py-3">
-                            <span className={`rounded border px-2 py-1 text-xs font-semibold ${alert.result === "FAIL" || alert.result === "SUSPICIOUS" ? "border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300" : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"}`}>
-                              {alert.result}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="space-y-4 px-5 py-5">
+                    <div className="grid gap-3 md:grid-cols-4">
+                      <InfoCard label={language === "zh" ? "关联告警数" : "Linked Alerts"} value={alertLookup.alarm_ids.length} />
+                      <InfoCard label={language === "zh" ? "命中告警数" : "Matched Alerts"} value={alertLookup.alarm_ids.length - alertLookup.missing_alarm_ids.length} />
+                      <InfoCard label={language === "zh" ? "缺失告警数" : "Missing Alerts"} value={alertLookup.missing_alarm_ids.length} />
+                      <InfoCard label={language === "zh" ? "数据表" : "Table"} value={alertLookup.table_name ?? "-"} />
+                    </div>
+
+                    {alertLookup.missing_alarm_ids.length > 0 ? (
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-300">
+                        {language === "zh" ? "未找到的告警 ID：" : "Missing alert IDs:"} {alertLookup.missing_alarm_ids.join(", ")}
+                      </div>
+                    ) : null}
+
+                    <div className="overflow-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+                      <table className="min-w-full border-collapse text-sm">
+                        <thead className="bg-slate-50 dark:bg-slate-950">
+                          <tr className="border-b border-slate-200 dark:border-slate-800">
+                            {[
+                              "#",
+                              language === "zh" ? "告警 ID" : "Alert ID",
+                              language === "zh" ? "状态" : "Status",
+                              language === "zh" ? "命中行数" : "Rows",
+                              ...alertColumns,
+                            ].map((label) => (
+                              <th key={label} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                {label}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                          {alertLookup.items.map((item) => {
+                            const row = item.rows[0] ?? {};
+                            return (
+                              <tr key={`${item.sort_order}-${item.alarm_id}`} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                                <td className="px-4 py-3 font-mono text-xs text-slate-500">{item.sort_order + 1}</td>
+                                <td className="px-4 py-3 font-mono text-xs text-slate-700 dark:text-slate-200">{item.alarm_id}</td>
+                                <td className="px-4 py-3">
+                                  <span
+                                    className={`rounded border px-2 py-1 text-xs font-semibold ${
+                                      item.found
+                                        ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                                        : "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300"
+                                    }`}
+                                  >
+                                    {item.found ? (language === "zh" ? "已找到" : "Found") : language === "zh" ? "不存在" : "Missing"}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.row_count}</td>
+                                {alertColumns.map((column) => (
+                                  <td key={`${item.sort_order}-${column}`} className="max-w-[240px] px-4 py-3 align-top text-xs text-slate-600 dark:text-slate-300">
+                                    <div className="truncate" title={row[column] == null ? "-" : String(row[column])}>
+                                      {row[column] == null
+                                        ? "-"
+                                        : typeof row[column] === "object"
+                                          ? JSON.stringify(row[column])
+                                          : String(row[column])}
+                                    </div>
+                                  </td>
+                                ))}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 )}
               </div>
             )}
 
             {tab === "context" && (
               <div className="px-5 py-5">
-                {localizedContext ? (
+                {ticketContextLoading ? (
+                  <div className="text-sm text-slate-500 dark:text-slate-400">{language === "zh" ? "正在加载工单上下文..." : "Loading ticket context..."}</div>
+                ) : ticketContextError ? (
+                  <div className="space-y-3">
+                    <div className="text-sm text-rose-600 dark:text-rose-300">{ticketContextError}</div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (id) {
+                          void loadTicketContext(id);
+                        }
+                      }}
+                      className="rounded-xl border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                    >
+                      {language === "zh" ? "重试" : "Retry"}
+                    </button>
+                  </div>
+                ) : visibleContext ? (
                   <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents() as never}>
-                    {localizedContext}
+                    {visibleContext}
                   </Markdown>
                 ) : (
-                  <div className="text-sm text-slate-500 dark:text-slate-400">{language === "zh" ? "当前工单无扩展上下文摘要。" : "No external context for this ticket."}</div>
+                  <div className="text-sm text-slate-500 dark:text-slate-400">{language === "zh" ? "当前工单无扩展上下文。" : "No ticket context for this ticket."}</div>
                 )}
               </div>
             )}
@@ -1063,6 +1258,12 @@ export default function TicketDetailPage() {
       {error && (
         <div className="fixed right-6 bottom-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 shadow-lg dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
           {error}
+        </div>
+      )}
+
+      {toast && (
+        <div className="pointer-events-none fixed right-6 top-24 z-40 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 shadow-xl dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+          {toast.message}
         </div>
       )}
     </div>

@@ -4,7 +4,19 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
@@ -160,3 +172,50 @@ class TicketEscalation(Base):
         DateTime(timezone=True), nullable=True
     )
     reject_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class TicketAlarmRelation(Base):
+    __tablename__ = "ticket_alarm_relation"
+    __table_args__ = (
+        UniqueConstraint("ticket_id", "sort_order", name="uq_ticket_alarm_relation_order"),
+        Index("idx_ticket_alarm_relation_ticket_alarm", "ticket_id", "alarm_id"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    ticket_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("tickets.id", ondelete="CASCADE"), nullable=False
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    alarm_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
+class TicketContext(Base):
+    __tablename__ = "ticket_context"
+
+    ticket_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("tickets.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    content_markdown: Mapped[str] = mapped_column(
+        Text().with_variant(LONGTEXT(), "mysql"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    created_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    updated_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)

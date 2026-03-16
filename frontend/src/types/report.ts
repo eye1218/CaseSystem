@@ -31,6 +31,9 @@ export interface ReportTemplateUpdatePayload {
 export interface ReportSummary {
   id: string;
   ticket_id: number;
+  ticket_category_id: string;
+  ticket_category_name: string;
+  ticket_created_at: string;
   title: string;
   report_type: string;
   note: string | null;

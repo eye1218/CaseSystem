@@ -117,6 +117,9 @@ def test_internal_user_can_upload_update_replace_and_delete_report(client):
     created = upload_report(client, ticket_id=100177, source_template_id=template["id"])
     report_id = created["id"]
     assert created["ticket_id"] == 100177
+    assert created["ticket_category_id"] == "endpoint"
+    assert created["ticket_category_name"] == "终端安全"
+    assert created["ticket_created_at"]
     assert created["source_template"]["id"] == template["id"]
 
     detail = client.get("/api/v1/tickets/100177/detail")
@@ -126,7 +129,9 @@ def test_internal_user_can_upload_update_replace_and_delete_report(client):
 
     listing = client.get("/api/v1/reports")
     assert listing.status_code == 200
-    assert any(item["id"] == report_id for item in listing.json()["items"])
+    listed = next(item for item in listing.json()["items"] if item["id"] == report_id)
+    assert listed["ticket_category_id"] == "endpoint"
+    assert listed["ticket_category_name"] == "终端安全"
 
     download = client.get(created["download_path"])
     assert download.status_code == 200

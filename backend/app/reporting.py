@@ -171,10 +171,13 @@ def _template_payload(template: ReportTemplate) -> dict:
     }
 
 
-def _report_payload(report: TicketReport) -> dict:
+def _report_payload(report: TicketReport, *, ticket: Ticket) -> dict:
     return {
         "id": report.id,
         "ticket_id": report.ticket_id,
+        "ticket_category_id": ticket.category_id,
+        "ticket_category_name": ticket.category_name,
+        "ticket_created_at": ticket.created_at,
         "title": report.title,
         "report_type": report.report_type,
         "note": report.note,
@@ -423,7 +426,7 @@ def list_reports(
     uploaded_by_me: bool = False,
 ) -> dict:
     statement = (
-        select(TicketReport)
+        select(TicketReport, Ticket)
         .join(Ticket, Ticket.id == TicketReport.ticket_id)
         .options(selectinload(TicketReport.source_template))
         .where(Ticket.is_deleted.is_(False))
@@ -441,15 +444,18 @@ def list_reports(
     if uploaded_by_me:
         statement = statement.where(TicketReport.uploaded_by_user_id == actor.user_id)
 
-    items = list(db.scalars(statement).all())
-    return {"items": [_report_payload(item) for item in items], "total_count": len(items)}
+    rows = list(db.execute(statement).all())
+    return {
+        "items": [_report_payload(report, ticket=ticket) for report, ticket in rows],
+        "total_count": len(rows),
+    }
 
 
 def get_report_detail(db: Session, actor: ActorContext, report_id: str) -> dict:
     accessible = _get_accessible_report(db, actor, report_id)
     if accessible is None:
         raise ReportingOperationError(404, "Report not found")
-    return _report_payload(accessible.report)
+    return _report_payload(accessible.report, ticket=accessible.ticket)
 
 
 async def create_report(
@@ -507,7 +513,7 @@ async def create_report(
         db.refresh(report)
         db.refresh(ticket)
         _invalidate_ticket_detail_cache(ticket.id)
-        return _report_payload(report)
+        return _report_payload(report, ticket=ticket)
     except Exception:
         db.rollback()
         delete_file(settings, stored_file.storage_key)
@@ -558,7 +564,7 @@ def update_report(
     db.commit()
     db.refresh(report)
     _invalidate_ticket_detail_cache(ticket.id)
-    return _report_payload(report)
+    return _report_payload(report, ticket=ticket)
 
 
 async def replace_report_file(
@@ -603,7 +609,7 @@ async def replace_report_file(
 
     delete_file(settings, old_storage_key)
     _invalidate_ticket_detail_cache(ticket.id)
-    return _report_payload(report)
+    return _report_payload(report, ticket=ticket)
 
 
 def delete_report(db: Session, settings: Settings, actor: ActorContext, report_id: str) -> None:
@@ -658,4 +664,4 @@ def list_reports_for_ticket_detail(db: Session, actor: ActorContext, *, ticket_i
             .order_by(TicketReport.updated_at.desc(), TicketReport.created_at.desc())
         ).all()
     )
-    return [_report_payload(item) for item in items]
+    return [_report_payload(item, ticket=ticket) for item in items]

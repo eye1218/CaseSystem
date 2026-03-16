@@ -17,6 +17,7 @@ import KnowledgeListPage from "../pages/KnowledgeListPage";
 import NotificationsPage from "../pages/NotificationsPage";
 import PlaceholderPage from "../pages/PlaceholderPage";
 import ConfigurationPage from "../pages/ConfigurationPage";
+import AlertSourcesPage from "../pages/AlertSourcesPage";
 import MailSendersPage from "../pages/MailSendersPage";
 import ReportTemplatesPage from "../pages/ReportTemplatesPage";
 import ReportsPage from "../pages/ReportsPage";
@@ -171,6 +172,14 @@ export const router = createBrowserRouter([
         element: (
           <RequireAdminRoute>
             <MailSendersPage />
+          </RequireAdminRoute>
+        )
+      },
+      {
+        path: "configuration/alert-sources",
+        element: (
+          <RequireAdminRoute>
+            <AlertSourcesPage />
           </RequireAdminRoute>
         )
       },

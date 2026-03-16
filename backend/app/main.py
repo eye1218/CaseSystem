@@ -16,6 +16,7 @@ from .database import SessionLocal, init_db
 from .dependencies import get_auth_service, require_auth, require_csrf
 from .modules.events.routes import event_router
 from .modules.knowledge.routes import knowledge_router
+from .modules.alert_sources.routes import alert_source_router
 from .modules.mail_senders.routes import mail_sender_router
 from .modules.realtime.routes import realtime_router
 from .modules.tasks.routes import task_router
@@ -86,11 +87,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     frontend_dist = _resolve_frontend_dist()
 
     class SPAStaticFiles(StaticFiles):
+        _api_like_prefixes = (
+            "api/",
+            "auth/",
+            "healthz",
+            "openapi.json",
+            "docs",
+            "redoc",
+            "socket.io",
+        )
+
         async def get_response(self, path: str, scope):
             try:
                 return await super().get_response(path, scope)
             except StarletteHTTPException as exc:
                 if exc.status_code == 404:
+                    normalized_path = path.lstrip("/")
+                    if normalized_path.startswith(self._api_like_prefixes):
+                        raise
                     return await super().get_response("index.html", scope)
                 raise
 
@@ -265,6 +279,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(template_router)
     app.include_router(task_router)
     app.include_router(mail_sender_router)
+    app.include_router(alert_source_router)
     app.include_router(user_management_router)
     app.include_router(report_router)
 

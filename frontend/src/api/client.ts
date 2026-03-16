@@ -76,6 +76,16 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     return undefined as T;
   }
 
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().includes("application/json")) {
+    const rawText = await response.text();
+    const compactText = rawText.replace(/\s+/g, " ").slice(0, 120);
+    const message = contentType.toLowerCase().includes("text/html")
+      ? "API returned HTML instead of JSON. The backend route may be missing or the deployed service is outdated."
+      : `API returned unexpected content type: ${contentType || "unknown"}`;
+    throw new ApiError(message, response.status, compactText || undefined);
+  }
+
   return (await response.json()) as T;
 }
 

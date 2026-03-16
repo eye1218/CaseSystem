@@ -1,4 +1,5 @@
 import {
+  Database,
   Bell,
   ChevronRight,
   FileCog,
@@ -68,6 +69,17 @@ const SUB_MODULES: SubModule[] = [
     path: "/configuration/mail-senders",
     icon: <Mail className="h-5 w-5 text-blue-500" />,
     tags: ["SMTP", "Email", "Sender"],
+    adminOnly: true
+  },
+  {
+    id: "alert-sources",
+    titleZh: "告警数据源配置",
+    titleEn: "Alert Source Config",
+    descZh: "维护外部告警数据库连接，支持连接测试和按工单匹配字段批量查询全字段结果。",
+    descEn: "Manage external alert data sources with connection testing and batch full-row lookups by ticket match field.",
+    path: "/configuration/alert-sources",
+    icon: <Database className="h-5 w-5 text-blue-500" />,
+    tags: ["StarRocks", "Alert", "Query"],
     adminOnly: true
   }
 ];

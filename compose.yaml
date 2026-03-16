@@ -3,7 +3,7 @@ x-app-environment: &app-environment
   CASESYSTEM_COOKIE_SECURE: ${CASESYSTEM_COOKIE_SECURE:-false}
   CASESYSTEM_JWT_SECRET_KEY: ${CASESYSTEM_JWT_SECRET_KEY:-change-me-in-production-at-least-32-bytes}
   CASESYSTEM_REPORT_STORAGE_DIR: ${CASESYSTEM_REPORT_STORAGE_DIR:-/app/.runtime/report-storage}
-  CASESYSTEM_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-casesystem}:${POSTGRES_PASSWORD:-change-me-db-password}@postgres:5432/${POSTGRES_DB:-casesystem}
+  CASESYSTEM_DATABASE_URL: ${CASESYSTEM_DATABASE_URL:-}
   CASESYSTEM_CELERY_BROKER_URL: redis://redis:6379/0
   CASESYSTEM_CELERY_RESULT_BACKEND: redis://redis:6379/1
   CASESYSTEM_CELERY_TASK_ALWAYS_EAGER: "false"

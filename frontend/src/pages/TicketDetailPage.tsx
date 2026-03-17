@@ -15,7 +15,7 @@ import {
   UserPlus,
   UserCheck
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -99,6 +99,118 @@ const actionOrder = [
   "reopen",
   "edit"
 ];
+
+const ALERT_DETAIL_FIELDS = [
+  "alert_date",
+  "alert_time",
+  "log_source",
+  "alert_type",
+  "action",
+  "src_ip",
+  "dst_ip",
+  "alert_ts_ms",
+  "version",
+  "log_source_ip",
+  "vendor",
+  "log_type",
+  "severity",
+  "raw",
+  "alert_id",
+  "alert_name",
+  "alert_description",
+  "cve_id",
+  "src_port",
+  "dst_port",
+  "protocol",
+  "ingest_time",
+  "net_direction",
+  "optional"
+] as const;
+
+const ALERT_SUMMARY_FIELDS: Array<(typeof ALERT_DETAIL_FIELDS)[number]> = [
+  "alert_date",
+  "alert_time",
+  "severity",
+  "src_ip",
+  "dst_ip",
+  "log_source"
+];
+
+type AlertDetailField = (typeof ALERT_DETAIL_FIELDS)[number];
+
+function compactValue(value: unknown) {
+  if (value == null || value === "") {
+    return "-";
+  }
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
+function detailValue(field: AlertDetailField, value: unknown) {
+  if (value == null || value === "") {
+    return "-";
+  }
+
+  if (field === "optional") {
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return "-";
+      }
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        return JSON.stringify(parsed, null, 2);
+      } catch {
+        return trimmed;
+      }
+    }
+    if (typeof value === "object") {
+      try {
+        return JSON.stringify(value, null, 2);
+      } catch {
+        return String(value);
+      }
+    }
+    return String(value);
+  }
+
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
+
+  return String(value);
+}
+
+function isLongAlertField(field: AlertDetailField) {
+  return field === "alert_description" || field === "raw" || field === "optional";
+}
+
+function isMonoAlertField(field: AlertDetailField) {
+  return [
+    "alert_time",
+    "alert_ts_ms",
+    "version",
+    "src_ip",
+    "dst_ip",
+    "log_source_ip",
+    "alert_id",
+    "cve_id",
+    "src_port",
+    "dst_port",
+    "protocol",
+    "ingest_time"
+  ].includes(field);
+}
 
 function priorityClass(priority: string) {
   switch (priority) {
@@ -378,6 +490,7 @@ export default function TicketDetailPage() {
   const [alertLookup, setAlertLookup] = useState<TicketAlarmLookupResponse | null>(null);
   const [alertLookupLoading, setAlertLookupLoading] = useState(false);
   const [alertLookupError, setAlertLookupError] = useState("");
+  const [expandedAlerts, setExpandedAlerts] = useState<Record<string, boolean>>({});
   const [ticketContext, setTicketContext] = useState<TicketContextResponse | null>(null);
   const [ticketContextLoading, setTicketContextLoading] = useState(false);
   const [ticketContextError, setTicketContextError] = useState("");
@@ -411,6 +524,7 @@ export default function TicketDetailPage() {
     try {
       const payload = await getTicketAlerts(ticketId);
       setAlertLookup(payload);
+      setExpandedAlerts({});
       if (payload.missing_alarm_ids.length > 0) {
         setToast({
           id: Date.now(),
@@ -464,6 +578,7 @@ export default function TicketDetailPage() {
     setKnowledgeDrawerArticle(null);
     setAlertLookup(null);
     setAlertLookupError("");
+    setExpandedAlerts({});
     setTicketContext(null);
     setTicketContextError("");
     setOwnershipAction(null);
@@ -703,6 +818,13 @@ export default function TicketDetailPage() {
     }
   };
 
+  const toggleAlertExpand = (rowKey: string) => {
+    setExpandedAlerts((current) => ({
+      ...current,
+      [rowKey]: !current[rowKey]
+    }));
+  };
+
   if (loading) {
     return <div className="p-6 text-sm text-slate-500 dark:text-slate-400">{t("common.loading")}</div>;
   }
@@ -711,16 +833,8 @@ export default function TicketDetailPage() {
     return <div className="p-6 text-sm text-slate-500 dark:text-slate-400">{error || "Ticket not found."}</div>;
   }
 
-  const summaryText = detail.responsibility_summary[language];
   const availableActions = actionOrder.filter((action) => detail.available_actions.includes(action));
   const visibleContext = ticketContext?.content_markdown ?? detail.context_markdown;
-  const alertColumns = Array.from(
-    new Set(
-      (alertLookup?.items ?? []).flatMap((item) =>
-        item.rows.flatMap((row) => Object.keys(row)),
-      ),
-    ),
-  );
 
   return (
     <div className="flex h-full items-stretch p-6">
@@ -1070,7 +1184,13 @@ export default function TicketDetailPage() {
                               language === "zh" ? "告警 ID" : "Alert ID",
                               language === "zh" ? "状态" : "Status",
                               language === "zh" ? "命中行数" : "Rows",
-                              ...alertColumns,
+                              "alert_date",
+                              "alert_time",
+                              "severity",
+                              "src_ip",
+                              "dst_ip",
+                              "log_source",
+                              language === "zh" ? "详情" : "Details"
                             ].map((label) => (
                               <th key={label} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
                                 {label}
@@ -1080,35 +1200,121 @@ export default function TicketDetailPage() {
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                           {alertLookup.items.map((item) => {
+                            const rowKey = `${item.sort_order}-${item.alarm_id}`;
+                            const expanded = Boolean(expandedAlerts[rowKey]);
                             const row = item.rows[0] ?? {};
                             return (
-                              <tr key={`${item.sort_order}-${item.alarm_id}`} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                                <td className="px-4 py-3 font-mono text-xs text-slate-500">{item.sort_order + 1}</td>
-                                <td className="px-4 py-3 font-mono text-xs text-slate-700 dark:text-slate-200">{item.alarm_id}</td>
-                                <td className="px-4 py-3">
-                                  <span
-                                    className={`rounded border px-2 py-1 text-xs font-semibold ${
-                                      item.found
-                                        ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
-                                        : "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300"
-                                    }`}
-                                  >
-                                    {item.found ? (language === "zh" ? "已找到" : "Found") : language === "zh" ? "不存在" : "Missing"}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.row_count}</td>
-                                {alertColumns.map((column) => (
-                                  <td key={`${item.sort_order}-${column}`} className="max-w-[240px] px-4 py-3 align-top text-xs text-slate-600 dark:text-slate-300">
-                                    <div className="truncate" title={row[column] == null ? "-" : String(row[column])}>
-                                      {row[column] == null
-                                        ? "-"
-                                        : typeof row[column] === "object"
-                                          ? JSON.stringify(row[column])
-                                          : String(row[column])}
-                                    </div>
+                              <Fragment key={rowKey}>
+                                <tr className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                                  <td className="px-4 py-3 font-mono text-xs text-slate-500">{item.sort_order + 1}</td>
+                                  <td className="px-4 py-3 font-mono text-xs text-slate-700 dark:text-slate-200">{item.alarm_id}</td>
+                                  <td className="px-4 py-3">
+                                    <span
+                                      className={`rounded border px-2 py-1 text-xs font-semibold ${
+                                        item.found
+                                          ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                                          : "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300"
+                                      }`}
+                                    >
+                                      {item.found ? (language === "zh" ? "已找到" : "Found") : language === "zh" ? "不存在" : "Missing"}
+                                    </span>
                                   </td>
-                                ))}
-                              </tr>
+                                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.row_count}</td>
+                                  {ALERT_SUMMARY_FIELDS.map((field) => (
+                                    <td key={`${rowKey}-${field}`} className="max-w-[240px] px-4 py-3 align-top text-xs text-slate-600 dark:text-slate-300">
+                                      <div className="truncate font-mono" title={compactValue(row[field])}>
+                                        {compactValue(row[field])}
+                                      </div>
+                                    </td>
+                                  ))}
+                                  <td className="px-4 py-3 text-right">
+                                    {item.found ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleAlertExpand(rowKey)}
+                                        className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs text-slate-600 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                                      >
+                                        <ChevronRight className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-90" : ""}`} />
+                                        {expanded ? (language === "zh" ? "收起" : "Collapse") : language === "zh" ? "展开" : "Expand"}
+                                      </button>
+                                    ) : (
+                                      <span className="text-xs text-slate-400">-</span>
+                                    )}
+                                  </td>
+                                </tr>
+                                {expanded ? (
+                                  <tr className="bg-slate-50/70 dark:bg-slate-950/40">
+                                    <td colSpan={11} className="px-4 py-4">
+                                      <div className="space-y-3">
+                                        {item.rows.length === 0 ? (
+                                          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+                                            {language === "zh" ? "当前告警无可展示的匹配明细。" : "No matched row details are available for this alert."}
+                                          </div>
+                                        ) : (
+                                          item.rows.map((matchedRow, index) => (
+                                            <div
+                                              key={`${rowKey}-matched-${index}`}
+                                              className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/80"
+                                            >
+                                              <div className="mb-3 flex items-center justify-between gap-3">
+                                                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                                  {language === "zh" ? `命中记录 #${index + 1}` : `Matched Row #${index + 1}`}
+                                                </div>
+                                                <div className="truncate font-mono text-xs text-slate-500 dark:text-slate-300">
+                                                  {compactValue(matchedRow.alert_id)}
+                                                </div>
+                                              </div>
+
+                                              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                                                {ALERT_DETAIL_FIELDS.filter((field) => !isLongAlertField(field)).map((field) => (
+                                                  <div
+                                                    key={`${rowKey}-${index}-${field}`}
+                                                    className="rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2 dark:border-slate-800 dark:bg-slate-950/30"
+                                                  >
+                                                    <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-400">{field}</div>
+                                                    <div
+                                                      className={`break-all leading-5 text-slate-700 dark:text-slate-200 ${
+                                                        isMonoAlertField(field) ? "font-mono text-[11px]" : "text-xs"
+                                                      }`}
+                                                    >
+                                                      {detailValue(field, matchedRow[field])}
+                                                    </div>
+                                                  </div>
+                                                ))}
+                                              </div>
+
+                                              <div className="mt-3 space-y-2">
+                                                {ALERT_DETAIL_FIELDS.filter((field) => isLongAlertField(field)).map((field) => {
+                                                  const value = detailValue(field, matchedRow[field]);
+                                                  return (
+                                                    <div
+                                                      key={`${rowKey}-${index}-${field}-long`}
+                                                      className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-800 dark:bg-slate-950/30"
+                                                    >
+                                                      <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-400">{field}</div>
+                                                      {value === "-" ? (
+                                                        <div className="text-xs leading-5 text-slate-500 dark:text-slate-400">-</div>
+                                                      ) : (
+                                                        <pre
+                                                          className={`max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-slate-200 bg-slate-950/95 p-3 leading-5 text-slate-100 dark:border-slate-800 ${
+                                                            field === "alert_description" ? "text-xs" : "font-mono text-[11px]"
+                                                          }`}
+                                                        >
+                                                          {value}
+                                                        </pre>
+                                                      )}
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            </div>
+                                          ))
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ) : null}
+                              </Fragment>
                             );
                           })}
                         </tbody>
@@ -1172,40 +1378,6 @@ export default function TicketDetailPage() {
                 language={language}
               />
             </div>
-          </div>
-
-          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="mb-3 flex items-center gap-2">
-              <UserCheck className="h-4 w-4 text-blue-500" />
-              <h2 className="text-sm font-semibold text-slate-900 dark:text-white">{language === "zh" ? "责任归属" : "Responsibility"}</h2>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <InfoCard label={t("ticket.assignee")} value={ticket.assigned_to ?? (language === "zh" ? "未领取" : "Unclaimed")} />
-              <InfoCard label={t("ticket.pool")} value={ticket.current_pool_code ?? "-"} />
-              <div className="col-span-2">
-                <InfoCard label={language === "zh" ? "责任层级" : "Tier"} value={ticket.responsibility_level} />
-              </div>
-            </div>
-            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300">
-              {summaryText}
-            </div>
-            {detail.pending_escalation ? (
-              <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/80 p-4 dark:border-amber-900/50 dark:bg-amber-950/20">
-                <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-amber-700 dark:text-amber-300">
-                  {language === "zh" ? "待处理升级请求" : "Pending Escalation"}
-                </div>
-                <div className="text-sm leading-6 text-slate-700 dark:text-slate-200">
-                  {detail.pending_escalation.target_user_id
-                    ? language === "zh"
-                      ? `已向指定用户发起升级，等待处理。发起人：${detail.pending_escalation.requested_by}`
-                      : `Directed escalation is waiting for response. Requested by ${detail.pending_escalation.requested_by}.`
-                    : detail.pending_escalation.target_pool_code}
-                </div>
-                <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                  {formatApiDateTime(detail.pending_escalation.requested_at, language)}
-                </div>
-              </div>
-            ) : null}
           </div>
 
           {user?.active_role !== "CUSTOMER" ? (

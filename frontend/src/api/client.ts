@@ -10,6 +10,8 @@ export class ApiError extends Error {
   }
 }
 
+let refreshPromise: Promise<boolean> | null = null;
+
 function getCookie(name: string): string | null {
   const encodedName = `${name}=`;
   const parts = document.cookie.split(";").map((part) => part.trim());
@@ -34,44 +36,74 @@ async function issueCsrf(): Promise<string> {
   return payload.csrf_token;
 }
 
-export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    credentials: "include",
-    headers: {
-      Accept: "application/json",
-      ...(init?.headers ?? {})
-    },
-    ...init
-  });
-
-  if (!response.ok) {
-    const rawText = await response.text();
-    let parsed: unknown = rawText || undefined;
-    let detail: unknown = rawText || undefined;
-    let message = rawText || `Request failed: ${response.status}`;
-
-    try {
-      parsed = JSON.parse(rawText) as unknown;
-      if (parsed && typeof parsed === "object") {
-        const record = parsed as Record<string, unknown>;
-        detail = record.detail ?? parsed;
-
-        if (typeof detail === "string") {
-          message = detail;
-        } else if (detail && typeof detail === "object") {
-          const detailRecord = detail as Record<string, unknown>;
-          if (typeof detailRecord.message === "string") {
-            message = detailRecord.message;
-          }
-        } else if (typeof record.message === "string") {
-          message = record.message;
-        }
-      }
-    } catch {}
-
-    throw new ApiError(message, response.status, detail ?? parsed);
+function resolveRequestPath(path: string): string {
+  try {
+    if (path.startsWith("http://") || path.startsWith("https://")) {
+      return new URL(path).pathname;
+    }
+    return new URL(path, "http://localhost").pathname;
+  } catch {
+    return path;
   }
+}
 
+function shouldAttemptTokenRefresh(path: string): boolean {
+  const requestPath = resolveRequestPath(path);
+  return !["/auth/login", "/auth/refresh", "/auth/csrf"].includes(requestPath);
+}
+
+function buildRequestHeaders(headers?: HeadersInit): Headers {
+  const mergedHeaders = new Headers(headers);
+  if (!mergedHeaders.has("Accept")) {
+    mergedHeaders.set("Accept", "application/json");
+  }
+  return mergedHeaders;
+}
+
+function buildRequestInit(init?: RequestInit, rotateCsrfHeader = false): RequestInit {
+  const headers = buildRequestHeaders(init?.headers);
+  if (rotateCsrfHeader && headers.has("X-CSRF-Token")) {
+    const latestCsrfToken = getCookie("XSRF-TOKEN");
+    if (latestCsrfToken) {
+      headers.set("X-CSRF-Token", latestCsrfToken);
+    }
+  }
+  return {
+    ...init,
+    credentials: "include",
+    headers
+  };
+}
+
+async function parseApiError(response: Response): Promise<ApiError> {
+  const rawText = await response.text();
+  let parsed: unknown = rawText || undefined;
+  let detail: unknown = rawText || undefined;
+  let message = rawText || `Request failed: ${response.status}`;
+
+  try {
+    parsed = JSON.parse(rawText) as unknown;
+    if (parsed && typeof parsed === "object") {
+      const record = parsed as Record<string, unknown>;
+      detail = record.detail ?? parsed;
+
+      if (typeof detail === "string") {
+        message = detail;
+      } else if (detail && typeof detail === "object") {
+        const detailRecord = detail as Record<string, unknown>;
+        if (typeof detailRecord.message === "string") {
+          message = detailRecord.message;
+        }
+      } else if (typeof record.message === "string") {
+        message = record.message;
+      }
+    }
+  } catch {}
+
+  return new ApiError(message, response.status, detail ?? parsed);
+}
+
+async function parseApiResponse<T>(response: Response): Promise<T> {
   if (response.status === 204) {
     return undefined as T;
   }
@@ -87,6 +119,54 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   }
 
   return (await response.json()) as T;
+}
+
+async function doRefreshTokenRequest(): Promise<boolean> {
+  try {
+    const csrfToken = await issueCsrf();
+    const refreshResponse = await fetch("/auth/refresh", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "X-CSRF-Token": csrfToken,
+        Origin: window.location.origin
+      }
+    });
+    return refreshResponse.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function refreshAccessToken(): Promise<boolean> {
+  if (!refreshPromise) {
+    refreshPromise = doRefreshTokenRequest().finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
+
+export async function refreshSessionSilently(): Promise<boolean> {
+  return refreshAccessToken();
+}
+
+export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  let response = await fetch(path, buildRequestInit(init));
+
+  if (response.status === 401 && shouldAttemptTokenRefresh(path)) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      response = await fetch(path, buildRequestInit(init, true));
+    }
+  }
+
+  if (!response.ok) {
+    throw await parseApiError(response);
+  }
+
+  return parseApiResponse<T>(response);
 }
 
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {

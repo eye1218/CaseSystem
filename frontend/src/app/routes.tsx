@@ -4,10 +4,12 @@ import MainLayout from "../components/MainLayout";
 import RequireAdminRoute from "../components/RequireAdminRoute";
 import RequireInternalRoute from "../components/RequireInternalRoute";
 import RequireInternalKnowledge from "../components/RequireInternalKnowledge";
+import RequireKpiRoute from "../components/RequireKpiRoute";
 import EventDetailPage from "../pages/EventDetailPage";
 import EventEditorPage from "../pages/EventEditorPage";
 import EventsPage from "../pages/EventsPage";
 import LoginPage from "../pages/LoginPage";
+import KpiPage from "../pages/KpiPage";
 import TicketCreatePage from "../pages/TicketCreatePage";
 import TicketListPage from "../pages/TicketListPage";
 import TicketDetailPage from "../pages/TicketDetailPage";
@@ -62,7 +64,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "sla-monitor",
-        element: <PlaceholderPage titleKey="nav.slaMonitor" description="SLA 监控页保留入口，后续按模块文档扩展。" />
+        element: <Navigate to="/tickets" replace />
       },
       {
         path: "notifications",
@@ -146,7 +148,11 @@ export const router = createBrowserRouter([
       },
       {
         path: "kpi",
-        element: <PlaceholderPage titleKey="nav.kpi" description="KPI 模块尚未进入本轮实现。" />
+        element: (
+          <RequireKpiRoute>
+            <KpiPage />
+          </RequireKpiRoute>
+        )
       },
       {
         path: "configuration",

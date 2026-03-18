@@ -16,6 +16,7 @@ from .database import SessionLocal, init_db
 from .dependencies import get_auth_service, require_auth, require_csrf
 from .modules.events.routes import event_router
 from .modules.knowledge.routes import knowledge_router
+from .modules.kpi.routes import kpi_router
 from .modules.alert_sources.routes import alert_source_router
 from .modules.mail_senders.routes import mail_sender_router
 from .modules.realtime.routes import realtime_router
@@ -376,6 +377,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(alert_source_router)
     app.include_router(user_management_router)
     app.include_router(report_router)
+    app.include_router(kpi_router)
 
     if frontend_dist is not None:
         app.mount(

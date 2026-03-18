@@ -9,7 +9,6 @@ import {
   Radio,
   Settings,
   Ticket,
-  Clock,
   Trash2,
   TrendingUp,
   Users
@@ -26,7 +25,6 @@ import logoLight from "../styles/logo-light.svg";
 const menuItems = [
   { id: "dashboard", icon: LayoutDashboard, label: "nav.dashboard", path: "/" },
   { id: "tickets", icon: Ticket, label: "nav.tickets", path: "/tickets" },
-  { id: "slaMonitor", icon: Clock, label: "nav.slaMonitor", path: "/sla-monitor" },
   { id: "notifications", icon: Bell, label: "nav.notifications", path: "/notifications" },
   { id: "knowledge", icon: BookOpen, label: "nav.knowledge", path: "/knowledge" },
   { id: "events", icon: Radio, label: "nav.events", path: "/events" },

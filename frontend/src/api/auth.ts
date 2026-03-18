@@ -33,3 +33,7 @@ export function createApiToken(payload: ApiTokenCreatePayload) {
 export function revokeApiToken(tokenId: string) {
   return apiDeleteJson<{ message: string }>(`/auth/tokens/${tokenId}`);
 }
+
+export function deleteApiToken(tokenId: string) {
+  return apiDeleteJson<{ message: string }>(`/auth/tokens/${tokenId}/permanent`);
+}

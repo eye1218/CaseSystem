@@ -1,9 +1,10 @@
-import { Copy, KeyRound, Plus, RefreshCw, ShieldOff, X } from "lucide-react";
+import { Copy, KeyRound, Plus, RefreshCw, ShieldOff, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
-import { createApiToken, listApiTokens, revokeApiToken } from "../api/auth";
+import { createApiToken, deleteApiToken, listApiTokens, revokeApiToken } from "../api/auth";
 import { useAuth } from "../contexts/AuthContext";
 import { useLanguage } from "../contexts/LanguageContext";
+import { copyToClipboard } from "../utils/clipboard";
 import type { ApiToken, ApiTokenCreatedResponse } from "../types/apiToken";
 import { formatApiDateTime } from "../utils/datetime";
 
@@ -34,9 +35,11 @@ function RawTokenBanner({
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(rawToken);
-    setCopied(true);
-    setTimeout(() => { setCopied(false); }, 2000);
+    const success = await copyToClipboard(rawToken);
+    if (success) {
+      setCopied(true);
+      setTimeout(() => { setCopied(false); }, 2000);
+    }
   };
 
   return (
@@ -200,6 +203,7 @@ export default function ApiTokensPage() {
   const [showModal, setShowModal] = useState(false);
   const [newlyCreated, setNewlyCreated] = useState<ApiTokenCreatedResponse | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -240,6 +244,24 @@ export default function ApiTokensPage() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setRevoking(null);
+    }
+  };
+
+  const handleDelete = async (tokenId: string) => {
+    if (!window.confirm(
+      language === "zh"
+        ? "确认要永久删除这个 Token 记录？此操作不可撤销。"
+        : "Are you sure you want to permanently delete this token record? This cannot be undone."
+    )) return;
+    setDeleting(tokenId);
+    setError(null);
+    try {
+      await deleteApiToken(tokenId);
+      await load();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeleting(null);
     }
   };
 
@@ -353,7 +375,9 @@ export default function ApiTokensPage() {
                 key={token.id}
                 token={token}
                 isRevoking={revoking === token.id}
+                isDeleting={deleting === token.id}
                 onRevoke={() => void handleRevoke(token.id)}
+                onDelete={() => void handleDelete(token.id)}
                 language={language}
               />
             ))
@@ -381,12 +405,16 @@ export default function ApiTokensPage() {
 function TokenRow({
   token,
   isRevoking,
+  isDeleting,
   onRevoke,
+  onDelete,
   language,
 }: {
   token: ApiToken;
   isRevoking: boolean;
+  isDeleting: boolean;
   onRevoke: () => void;
+  onDelete: () => void;
   language: "zh" | "en";
 }) {
   return (
@@ -423,18 +451,32 @@ function TokenRow({
         </div>
       </div>
 
-      {token.status === "active" && (
-        <button
-          onClick={onRevoke}
-          disabled={isRevoking}
-          className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-red-200 px-3 py-2 text-sm text-red-700 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/30"
-        >
-          <ShieldOff className="h-4 w-4" />
-          {isRevoking
-            ? (language === "zh" ? "吊销中..." : "Revoking...")
-            : (language === "zh" ? "吊销" : "Revoke")}
-        </button>
-      )}
+      <div className="flex shrink-0 items-center gap-2">
+        {token.status === "active" && (
+          <button
+            onClick={onRevoke}
+            disabled={isRevoking}
+            className="inline-flex items-center gap-2 rounded-xl border border-red-200 px-3 py-2 text-sm text-red-700 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/30"
+          >
+            <ShieldOff className="h-4 w-4" />
+            {isRevoking
+              ? (language === "zh" ? "吊销中..." : "Revoking...")
+              : (language === "zh" ? "吊销" : "Revoke")}
+          </button>
+        )}
+        {token.status !== "active" && (
+          <button
+            onClick={onDelete}
+            disabled={isDeleting}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-500 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-400 dark:hover:border-red-900 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+          >
+            <Trash2 className="h-4 w-4" />
+            {isDeleting
+              ? (language === "zh" ? "删除中..." : "Deleting...")
+              : (language === "zh" ? "删除" : "Delete")}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

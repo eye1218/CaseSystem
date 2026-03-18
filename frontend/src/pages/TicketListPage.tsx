@@ -757,7 +757,7 @@ export default function TicketListPage({ assignedToMeOnly = false }: TicketListP
                             </div>
                           </td>
                           <td className="px-4 py-3">
-                            <div className="max-w-xs truncate whitespace-nowrap font-medium text-slate-900 dark:text-white" title={ticket.title}>
+                            <div className="max-w-xs truncate whitespace-nowrap font-bold text-slate-900 dark:text-white" title={ticket.title}>
                               {ticket.title}
                             </div>
                           </td>

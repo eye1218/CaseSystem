@@ -42,6 +42,7 @@ import {
 } from "../api/templates";
 import { useAuth } from "../contexts/AuthContext";
 import { useLanguage } from "../contexts/LanguageContext";
+import { copyToClipboard } from "../utils/clipboard";
 import type {
   HttpMethod,
   LocalizedText,
@@ -656,9 +657,12 @@ function VariableGuide({ language }: { language: Language }) {
                   <button
                     key={variable.name}
                     onClick={() => {
-                      navigator.clipboard.writeText(syntax).catch(() => undefined);
-                      setCopied(variable.name);
-                      window.setTimeout(() => setCopied(null), 1500);
+                      void copyToClipboard(syntax).then((success) => {
+                        if (success) {
+                          setCopied(variable.name);
+                          window.setTimeout(() => setCopied(null), 1500);
+                        }
+                      });
                     }}
                     className="group flex w-full items-start gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-slate-100 dark:hover:bg-slate-700/60"
                     title={syntax}

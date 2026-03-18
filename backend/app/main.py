@@ -17,6 +17,7 @@ from .dependencies import get_auth_service, require_auth, require_csrf
 from .modules.events.routes import event_router
 from .modules.knowledge.routes import knowledge_router
 from .modules.kpi.routes import kpi_router
+from .modules.audit.routes import audit_router
 from .modules.alert_sources.routes import alert_source_router
 from .modules.mail_senders.routes import mail_sender_router
 from .modules.realtime.routes import realtime_router
@@ -259,6 +260,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         auth_service.revoke_api_token(token_id=token_id, actor=actor)
         return MessageResponse(message="Token revoked")
 
+    @app.delete(
+        "/auth/tokens/{token_id}/permanent",
+        response_model=MessageResponse,
+        dependencies=[Depends(require_csrf)],
+    )
+    def delete_my_token(
+        token_id: str,
+        actor: Annotated[ActorContext, Depends(require_auth)],
+        auth_service=Depends(get_auth_service),
+    ) -> MessageResponse:
+        auth_service.delete_api_token(token_id=token_id, actor=actor)
+        return MessageResponse(message="Token deleted")
+
     # --- Admin token management ---
 
     @app.get("/api/v1/users/{user_id}/tokens", response_model=ApiTokenListResponse)
@@ -378,6 +392,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(user_management_router)
     app.include_router(report_router)
     app.include_router(kpi_router)
+    app.include_router(audit_router)
 
     if frontend_dist is not None:
         app.mount(

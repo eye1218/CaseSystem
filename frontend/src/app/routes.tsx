@@ -9,6 +9,7 @@ import EventDetailPage from "../pages/EventDetailPage";
 import EventEditorPage from "../pages/EventEditorPage";
 import EventsPage from "../pages/EventsPage";
 import LoginPage from "../pages/LoginPage";
+import AuditPage from "../pages/AuditPage";
 import KpiPage from "../pages/KpiPage";
 import TicketCreatePage from "../pages/TicketCreatePage";
 import TicketListPage from "../pages/TicketListPage";
@@ -28,6 +29,7 @@ import TaskTemplatesPage from "../pages/TaskTemplatesPage";
 import TemplateRenderingPage from "../pages/TemplateRenderingPage";
 import UsersPage from "../pages/UsersPage";
 import ApiTokensPage from "../pages/ApiTokensPage";
+import ProfilePage from "../pages/ProfilePage";
 
 export const router = createBrowserRouter([
   {
@@ -200,7 +202,11 @@ export const router = createBrowserRouter([
       },
       {
         path: "audit",
-        element: <PlaceholderPage titleKey="nav.audit" description="审计页保留入口，后续接入操作日志查询。" />
+        element: (
+          <RequireAdminRoute>
+            <AuditPage />
+          </RequireAdminRoute>
+        )
       },
       {
         path: "recycle-bin",
@@ -209,6 +215,10 @@ export const router = createBrowserRouter([
       {
         path: "api-tokens",
         element: <ApiTokensPage />
+      },
+      {
+        path: "profile",
+        element: <ProfilePage />
       }
     ]
   }

@@ -97,15 +97,24 @@ export default function KnowledgeDrawer({
   const content = article?.content_markdown ?? "";
 
   return (
-    <div
-      className={`relative z-20 flex-shrink-0 overflow-hidden ${open ? "pointer-events-auto" : "pointer-events-none"}`}
-      style={{
-        width: open ? 560 : 0,
-        marginLeft: open ? 16 : 0,
-        transition: "width 280ms cubic-bezier(0.4,0,0.2,1), margin-left 280ms cubic-bezier(0.4,0,0.2,1)"
-      }}
-    >
-      <div className="relative flex max-h-[calc(100vh-3rem)] w-[560px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 z-30 bg-slate-950/30 backdrop-blur-[2px] transition-opacity duration-300"
+        style={{ opacity: open ? 1 : 0, pointerEvents: open ? "auto" : "none" }}
+        onClick={onClose}
+        aria-hidden="true"
+      />
+
+      {/* Drawer panel */}
+      <div
+        className="fixed right-0 top-16 bottom-0 z-40 flex w-[560px] flex-col overflow-hidden rounded-l-2xl border-l border-y border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+        style={{
+          transform: open ? "translateX(0)" : "translateX(100%)",
+          transition: "transform 280ms cubic-bezier(0.4,0,0.2,1)",
+          pointerEvents: open ? "auto" : "none"
+        }}
+      >
         {article ? (
           <>
             <div className="border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
@@ -198,6 +207,6 @@ export default function KnowledgeDrawer({
           </div>
         )}
       </div>
-    </div>
+    </>
   );
 }

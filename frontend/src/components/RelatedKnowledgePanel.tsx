@@ -31,8 +31,8 @@ export default function RelatedKnowledgePanel({
       <div className="border-b border-slate-200 bg-slate-50 px-4 py-3.5 dark:border-slate-800 dark:bg-slate-800/80">
         <div className="mb-1.5 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <BookOpen className="h-3.5 w-3.5 text-blue-500" />
-            <h2 className="text-xs uppercase tracking-wider text-slate-700 dark:text-slate-200">
+            <BookOpen className="h-4 w-4 text-blue-500" />
+            <h2 className="text-sm font-semibold text-slate-900 dark:text-white">
               {zh ? "相关知识库" : "Related Knowledge"}
             </h2>
           </div>

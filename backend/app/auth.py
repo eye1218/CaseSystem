@@ -245,6 +245,17 @@ class AuthService:
         token_row.revoked_at = utcnow()
         self.db.commit()
 
+    def delete_api_token(self, *, token_id: str, actor: ActorContext) -> None:
+        token_row = self.db.scalar(select(ApiToken).where(ApiToken.id == token_id))
+        if token_row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Token not found")
+        if token_row.user_id != actor.user_id and not has_permission(actor.active_role, "config:manage"):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+        if token_row.status == "active":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete an active token; revoke it first")
+        self.db.delete(token_row)
+        self.db.commit()
+
     def list_api_tokens(self, *, user_id: str) -> list[ApiToken]:
         return list(self.db.scalars(select(ApiToken).where(ApiToken.user_id == user_id)).all())
 

@@ -72,11 +72,8 @@ export interface AuditTicketListQuery {
     | "all"
     | "WAITING_RESPONSE"
     | "IN_PROGRESS"
-    | "RESPONSE_TIMEOUT"
-    | "RESOLUTION_TIMEOUT"
     | "RESOLVED"
-    | "CLOSED"
-    | "REOPENED";
+    | "CLOSED";
   createdFrom?: string;
   createdTo?: string;
   sortBy?: "ticket_id" | "last_event_at" | "log_count" | "risk_score" | "updated_at";

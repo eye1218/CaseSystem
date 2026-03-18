@@ -32,8 +32,6 @@ const priorityOptions = ["P1", "P2", "P3", "P4"];
 const mainStatusOptions = [
   "WAITING_RESPONSE",
   "IN_PROGRESS",
-  "RESPONSE_TIMEOUT",
-  "RESOLUTION_TIMEOUT",
   "RESOLVED",
   "CLOSED"
 ];
@@ -54,7 +52,7 @@ const PAGE_SIZE = 40;
 function metricSummary(items: TicketSummary[]) {
   return {
     waiting: items.filter((item) => item.main_status === "WAITING_RESPONSE").length,
-    timeout: items.filter((item) => item.main_status === "RESPONSE_TIMEOUT" || item.main_status === "RESOLUTION_TIMEOUT").length,
+    timeout: items.filter((item) => item.sub_status === "RESPONSE_TIMEOUT" || item.sub_status === "RESOLUTION_TIMEOUT").length,
     closed: items.filter((item) => item.main_status === "RESOLVED" || item.main_status === "CLOSED").length
   };
 }
@@ -163,9 +161,6 @@ function statusClass(status: string) {
       return "border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200";
     case "IN_PROGRESS":
       return "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300";
-    case "RESPONSE_TIMEOUT":
-    case "RESOLUTION_TIMEOUT":
-      return "border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300";
     case "RESOLVED":
       return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300";
     case "CLOSED":

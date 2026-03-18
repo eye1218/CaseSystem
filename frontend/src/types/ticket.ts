@@ -4,17 +4,17 @@ import type { ReportSummary, ReportTemplateSummary } from "./report";
 export type TicketMainStatus =
   | "WAITING_RESPONSE"
   | "IN_PROGRESS"
-  | "RESPONSE_TIMEOUT"
-  | "RESOLUTION_TIMEOUT"
   | "RESOLVED"
-  | "CLOSED"
-  | "REOPENED";
+  | "CLOSED";
 
 export type TicketSubStatus =
   | "NONE"
+  | "RESPONSE_TIMEOUT"
+  | "RESOLUTION_TIMEOUT"
   | "ESCALATION_PENDING_CONFIRM"
   | "ESCALATION_CONFIRMED"
-  | "ESCALATION_REJECTED";
+  | "ESCALATION_REJECTED"
+  | "REOPENED";
 
 export type TicketPriority = "P1" | "P2" | "P3" | "P4";
 export type TicketClaimStatus = "claimed" | "unclaimed";

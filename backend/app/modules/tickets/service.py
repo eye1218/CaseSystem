@@ -627,17 +627,10 @@ def _available_actions(
         if actor.active_role == RoleCode.ADMIN.value:
             actions.append("assign")
 
-    if can_operate_ticket and ticket.main_status in {
-        TicketMainStatus.WAITING_RESPONSE.value,
-        TicketMainStatus.RESPONSE_TIMEOUT.value,
-    }:
+    if can_operate_ticket and ticket.main_status == TicketMainStatus.WAITING_RESPONSE.value:
         actions.append("respond")
 
-    if can_operate_ticket and ticket.main_status in {
-        TicketMainStatus.IN_PROGRESS.value,
-        TicketMainStatus.RESPONSE_TIMEOUT.value,
-        TicketMainStatus.RESOLUTION_TIMEOUT.value,
-    }:
+    if can_operate_ticket and ticket.main_status == TicketMainStatus.IN_PROGRESS.value:
         actions.append("resolve")
 
     if can_operate_ticket and ticket.main_status == TicketMainStatus.RESOLVED.value:
@@ -1381,11 +1374,9 @@ def execute_ticket_action(
     if action == "respond":
         if ticket.responded_at is None:
             ticket.responded_at = now
-        if ticket.main_status in {
-            TicketMainStatus.WAITING_RESPONSE.value,
-            TicketMainStatus.REOPENED.value,
-        }:
+        if ticket.main_status == TicketMainStatus.WAITING_RESPONSE.value:
             ticket.main_status = TicketMainStatus.IN_PROGRESS.value
+        ticket.sub_status = TicketSubStatus.NONE.value
         ticket.updated_at = now
         _record_action(
             db,
@@ -1404,6 +1395,7 @@ def execute_ticket_action(
         _assert_internal_actor(actor)
         ticket.resolved_at = now
         ticket.main_status = TicketMainStatus.RESOLVED.value
+        ticket.sub_status = TicketSubStatus.NONE.value
         ticket.updated_at = now
         _record_action(
             db,
@@ -1422,6 +1414,7 @@ def execute_ticket_action(
         _assert_internal_actor(actor)
         ticket.closed_at = now
         ticket.main_status = TicketMainStatus.CLOSED.value
+        ticket.sub_status = TicketSubStatus.NONE.value
         ticket.updated_at = now
         _record_action(
             db,
@@ -1440,14 +1433,15 @@ def execute_ticket_action(
         )
     elif action == "reopen":
         ticket.closed_at = None
-        ticket.main_status = TicketMainStatus.WAITING_RESPONSE.value
+        ticket.main_status = TicketMainStatus.CLOSED.value
+        ticket.sub_status = TicketSubStatus.REOPENED.value
         ticket.updated_at = now
         _record_action(
             db,
             ticket_id=ticket.id,
             actor=actor,
             action_type="reopened",
-            content=note or "工单已重开，重新回到待响应状态。",
+            content=note or "工单已重开。",
             from_status=previous_status,
             to_status=ticket.main_status,
         )

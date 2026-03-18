@@ -3,8 +3,8 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --font-sans: "IBM Plex Sans", "Inter", "Noto Sans SC", "PingFang SC", sans-serif;
-  --font-mono: "IBM Plex Mono", "SFMono-Regular", monospace;
+  --font-sans: "Inter", "Noto Sans SC", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", monospace;
   --background: #f4f7fb;
   --foreground: #0f172a;
   --card: #ffffff;
@@ -52,6 +52,8 @@ body {
     radial-gradient(circle at right bottom, rgba(15, 23, 42, 0.05), transparent 22%),
     var(--background);
   color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 a {

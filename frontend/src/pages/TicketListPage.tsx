@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronUp, Edit, Eye, Filter, Plus, Search, ShieldAlert } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 
@@ -46,6 +46,8 @@ const claimStatusOptions: Array<{ value: TicketClaimStatus; zh: string; en: stri
   { value: "unclaimed", zh: "未被领取", en: "Unclaimed" },
   { value: "claimed", zh: "已被领取", en: "Claimed" }
 ];
+const POOL_CODES = ["T1_POOL", "T2_POOL", "T3_POOL"] as const;
+type PoolCode = (typeof POOL_CODES)[number];
 
 const PAGE_SIZE = 40;
 
@@ -246,6 +248,13 @@ export default function TicketListPage({ assignedToMeOnly = false }: TicketListP
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [showFilters, setShowFilters] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState<TicketSummary | null>(null);
+  const [poolTotals, setPoolTotals] = useState<Record<PoolCode, number | null>>({
+    T1_POOL: null,
+    T2_POOL: null,
+    T3_POOL: null
+  });
+  const [poolTotalsLoading, setPoolTotalsLoading] = useState(false);
+  const [poolTotalsError, setPoolTotalsError] = useState("");
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const requestSeqRef = useRef(0);
   const loadMoreLockedRef = useRef(false);
@@ -281,6 +290,54 @@ export default function TicketListPage({ assignedToMeOnly = false }: TicketListP
       sortField
     ]
   );
+
+  const loadPoolTotals = useCallback(async () => {
+    setPoolTotalsLoading(true);
+    setPoolTotalsError("");
+
+    try {
+      const responses = await Promise.allSettled(
+        POOL_CODES.map(async (poolCode) => {
+          const payload = await listTickets({
+            poolCodes: [poolCode],
+            limit: 1,
+            offset: 0
+          });
+          return {
+            poolCode,
+            count: payload.filtered_count ?? payload.total_count
+          };
+        })
+      );
+
+      const nextTotals: Record<PoolCode, number | null> = {
+        T1_POOL: null,
+        T2_POOL: null,
+        T3_POOL: null
+      };
+      let hasPartialFailure = false;
+
+      for (const response of responses) {
+        if (response.status === "fulfilled") {
+          nextTotals[response.value.poolCode] = response.value.count;
+        } else {
+          hasPartialFailure = true;
+        }
+      }
+
+      setPoolTotals(nextTotals);
+      setPoolTotalsError(hasPartialFailure ? "partial_unavailable" : "");
+    } catch (error) {
+      setPoolTotals({
+        T1_POOL: null,
+        T2_POOL: null,
+        T3_POOL: null
+      });
+      setPoolTotalsError(errorMessage(error, language === "zh" ? "池子统计加载失败" : "Pool totals unavailable"));
+    } finally {
+      setPoolTotalsLoading(false);
+    }
+  }, [language]);
 
   useEffect(() => {
     let cancelled = false;
@@ -335,6 +392,10 @@ export default function TicketListPage({ assignedToMeOnly = false }: TicketListP
       cancelled = true;
     };
   }, [language, listQuery]);
+
+  useEffect(() => {
+    void loadPoolTotals();
+  }, [loadPoolTotals]);
 
   const loadMoreTickets = () => {
     if (loading || loadingMore || !hasMore || loadMoreLockedRef.current) {
@@ -475,6 +536,13 @@ export default function TicketListPage({ assignedToMeOnly = false }: TicketListP
     sortField
   ]);
 
+  useEffect(() => {
+    if (!lastTicketEvent) {
+      return;
+    }
+    void loadPoolTotals();
+  }, [lastTicketEvent, loadPoolTotals]);
+
   const metrics = useMemo(() => metricSummary(items), [items]);
   const visibleMetricSubtitle =
     language === "zh"
@@ -502,11 +570,12 @@ export default function TicketListPage({ assignedToMeOnly = false }: TicketListP
 
   return (
     <div className="flex h-full flex-col gap-6 p-6">
-      <section className="grid gap-4 md:grid-cols-4">
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
         <MetricCard title={t("ticket.metrics.visible")} value={`${items.length} / ${filteredCount}`} subtitle={visibleMetricSubtitle} />
         <MetricCard title={t("ticket.metrics.waiting")} value={String(metrics.waiting)} subtitle="当前处于待响应状态的工单" />
         <MetricCard title={t("ticket.metrics.timeout")} value={String(metrics.timeout)} subtitle="需要优先盯防的超时工单" />
         <MetricCard title={t("ticket.metrics.closed")} value={String(metrics.closed)} subtitle="用于复盘和闭环的工单" />
+        <PoolTotalsMetricCard language={language} totals={poolTotals} loading={poolTotalsLoading} errorMessage={poolTotalsError} />
       </section>
 
       <section className="flex flex-col gap-6 xl:flex-row xl:items-start">
@@ -727,13 +796,14 @@ export default function TicketListPage({ assignedToMeOnly = false }: TicketListP
                                 <Eye className="h-3.5 w-3.5" />
                                 {t("ticket.view")}
                               </Link>
-                              <button
+                              <Link
+                                to={`/tickets/${ticket.id}?edit=1`}
                                 onClick={(event) => event.stopPropagation()}
                                 className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
                               >
                                 <Edit className="h-3.5 w-3.5" />
                                 {t("ticket.edit")}
-                              </button>
+                              </Link>
                             </div>
                           </td>
                         </tr>
@@ -773,6 +843,56 @@ function MetricCard({ title, value, subtitle }: { title: string; value: string; 
       <div className="text-sm text-slate-500 dark:text-slate-400">{title}</div>
       <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900 dark:text-white">{value}</div>
       <div className="mt-2 text-xs leading-5 text-slate-400">{subtitle}</div>
+    </div>
+  );
+}
+
+function PoolTotalsMetricCard({
+  language,
+  totals,
+  loading,
+  errorMessage
+}: {
+  language: "zh" | "en";
+  totals: Record<PoolCode, number | null>;
+  loading: boolean;
+  errorMessage: string;
+}) {
+  const poolItems = [
+    { key: "T1_POOL" as const, label: "T1", tone: "text-blue-600 dark:text-blue-300" },
+    { key: "T2_POOL" as const, label: "T2", tone: "text-amber-600 dark:text-amber-300" },
+    { key: "T3_POOL" as const, label: "T3", tone: "text-rose-600 dark:text-rose-300" }
+  ];
+
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <div className="text-sm text-slate-500 dark:text-slate-400">{language === "zh" ? "池子总量" : "Pool Totals"}</div>
+      <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/40">
+        <div className="grid grid-cols-3">
+          {poolItems.map((item, index) => (
+            <div
+              key={item.key}
+              className={`px-3 py-2.5 ${index < poolItems.length - 1 ? "border-r border-slate-200 dark:border-slate-800" : ""}`}
+            >
+              <div className={`mb-1 text-[11px] font-semibold tracking-[0.12em] ${item.tone}`}>{item.label}</div>
+              {loading ? (
+                <div className="h-7 w-14 animate-pulse rounded bg-slate-200 dark:bg-slate-700" />
+              ) : (
+                <div className={`font-mono text-3xl font-semibold leading-8 tabular-nums ${item.tone}`}>{totals[item.key] ?? "--"}</div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className={`mt-2 text-xs leading-5 ${errorMessage ? "text-amber-600 dark:text-amber-300" : "text-slate-400"}`}>
+        {errorMessage
+          ? language === "zh"
+            ? "部分池子统计暂不可用"
+            : "Some pool totals are temporarily unavailable"
+          : language === "zh"
+            ? "按当前账号可见范围统计"
+            : "Counts scoped to current account visibility"}
+      </div>
     </div>
   );
 }

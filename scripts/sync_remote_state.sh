@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REMOTE_HOST="${REMOTE_HOST:-192.168.20.142}"
+REMOTE_HOST="${REMOTE_HOST:-192.168.2.90}"
 REMOTE_USER="${REMOTE_USER:-root}"
 REMOTE_DIR="${REMOTE_DIR:-/root/workspace/CaseSystem}"
 

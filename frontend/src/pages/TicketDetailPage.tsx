@@ -19,7 +19,7 @@ import { Fragment, useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Link, useParams } from "react-router-dom";
+import { Link, useSearchParams, useParams } from "react-router-dom";
 
 import { ApiError } from "../api/client";
 import { getKnowledgeArticle } from "../api/knowledge";
@@ -32,7 +32,6 @@ import {
   getTicketContext,
   getTicketDetail,
   getTicketLive,
-  listTickets,
   listInternalTicketUsers,
   runTicketAction,
   updateTicket
@@ -139,8 +138,6 @@ const ALERT_SUMMARY_FIELDS: Array<(typeof ALERT_DETAIL_FIELDS)[number]> = [
 
 type AlertDetailField = (typeof ALERT_DETAIL_FIELDS)[number];
 const ALERT_LONG_FIELDS: AlertDetailField[] = ["alert_description", "optional", "raw"];
-const POOL_CODES = ["T1_POOL", "T2_POOL", "T3_POOL"] as const;
-type PoolCode = (typeof POOL_CODES)[number];
 
 function compactValue(value: unknown) {
   if (value == null || value === "") {
@@ -457,54 +454,6 @@ function InfoCard({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-function PoolTotalsCard({
-  language,
-  totals,
-  loading,
-  errorMessage
-}: {
-  language: "zh" | "en";
-  totals: Record<PoolCode, number | null>;
-  loading: boolean;
-  errorMessage: string;
-}) {
-  const poolItems = [
-    { key: "T1_POOL" as const, label: "T1", tone: "text-blue-600 dark:text-blue-300" },
-    { key: "T2_POOL" as const, label: "T2", tone: "text-amber-600 dark:text-amber-300" },
-    { key: "T3_POOL" as const, label: "T3", tone: "text-rose-600 dark:text-rose-300" }
-  ];
-
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/70">
-      <div className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-        {language === "zh" ? "池子总量" : "Pool Totals"}
-      </div>
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/40">
-        <div className="grid grid-cols-3">
-          {poolItems.map((item, index) => (
-            <div
-              key={item.key}
-              className={`px-3 py-2.5 ${index < poolItems.length - 1 ? "border-r border-slate-200 dark:border-slate-800" : ""}`}
-            >
-              <div className={`mb-1 text-[11px] font-semibold tracking-[0.12em] ${item.tone}`}>{item.label}</div>
-              {loading ? (
-                <div className="h-6 w-14 animate-pulse rounded bg-slate-200 dark:bg-slate-700" />
-              ) : (
-                <div className={`font-mono text-xl leading-6 tabular-nums ${item.tone}`}>{totals[item.key] ?? "--"}</div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-      {errorMessage ? (
-        <div className="mt-2 text-xs text-amber-600 dark:text-amber-300">
-          {language === "zh" ? "部分数据暂不可用" : "Some values are temporarily unavailable"}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function mergeLiveIntoDetail(current: TicketDetail, live: TicketLive): TicketDetail {
   return {
     ...current,
@@ -519,6 +468,7 @@ function mergeLiveIntoDetail(current: TicketDetail, live: TicketLive): TicketDet
 
 export default function TicketDetailPage() {
   const { id } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { language, t } = useLanguage();
   const { user } = useAuth();
   const { lastTicketEvent } = useRealtime();
@@ -543,14 +493,6 @@ export default function TicketDetailPage() {
   const [alertLookupLoading, setAlertLookupLoading] = useState(false);
   const [alertLookupError, setAlertLookupError] = useState("");
   const [expandedAlerts, setExpandedAlerts] = useState<Record<string, boolean>>({});
-  const [poolTotals, setPoolTotals] = useState<Record<PoolCode, number | null>>({
-    T1_POOL: null,
-    T2_POOL: null,
-    T3_POOL: null
-  });
-  const [poolTotalsLoading, setPoolTotalsLoading] = useState(false);
-  const [poolTotalsLoaded, setPoolTotalsLoaded] = useState(false);
-  const [poolTotalsError, setPoolTotalsError] = useState("");
   const [ticketContext, setTicketContext] = useState<TicketContextResponse | null>(null);
   const [ticketContextLoading, setTicketContextLoading] = useState(false);
   const [ticketContextError, setTicketContextError] = useState("");
@@ -614,55 +556,6 @@ export default function TicketDetailPage() {
     }
   };
 
-  const loadPoolTotals = async () => {
-    setPoolTotalsLoading(true);
-    setPoolTotalsError("");
-
-    try {
-      const responses = await Promise.allSettled(
-        POOL_CODES.map(async (poolCode) => {
-          const payload = await listTickets({
-            poolCodes: [poolCode],
-            limit: 1,
-            offset: 0
-          });
-          return {
-            poolCode,
-            count: payload.filtered_count ?? payload.total_count
-          };
-        })
-      );
-
-      const nextTotals: Record<PoolCode, number | null> = {
-        T1_POOL: null,
-        T2_POOL: null,
-        T3_POOL: null
-      };
-
-      let hasPartialFailure = false;
-      for (const response of responses) {
-        if (response.status === "fulfilled") {
-          nextTotals[response.value.poolCode] = response.value.count;
-        } else {
-          hasPartialFailure = true;
-        }
-      }
-
-      setPoolTotals(nextTotals);
-      setPoolTotalsError(hasPartialFailure ? "partial_unavailable" : "");
-    } catch (loadError) {
-      setPoolTotals({
-        T1_POOL: null,
-        T2_POOL: null,
-        T3_POOL: null
-      });
-      setPoolTotalsError(loadError instanceof Error ? loadError.message : "Failed to load pool totals");
-    } finally {
-      setPoolTotalsLoading(false);
-      setPoolTotalsLoaded(true);
-    }
-  };
-
   useEffect(() => {
     let cancelled = false;
 
@@ -688,20 +581,13 @@ export default function TicketDetailPage() {
     setAlertLookup(null);
     setAlertLookupError("");
     setExpandedAlerts({});
-    setPoolTotals({
-      T1_POOL: null,
-      T2_POOL: null,
-      T3_POOL: null
-    });
-    setPoolTotalsLoaded(false);
-    setPoolTotalsLoading(false);
-    setPoolTotalsError("");
     setTicketContext(null);
     setTicketContextError("");
     setOwnershipAction(null);
     setOwnershipTargetId("");
     setOwnershipNote("");
     setOwnershipError("");
+    setEditing(false);
   }, [id]);
 
   useEffect(() => {
@@ -770,18 +656,23 @@ export default function TicketDetailPage() {
   }, [alertLookup, alertLookupError, alertLookupLoading, detail, id, tab]);
 
   useEffect(() => {
-    if (!detail || tab !== "alerts" || poolTotalsLoading || poolTotalsLoaded) {
-      return;
-    }
-    void loadPoolTotals();
-  }, [detail, poolTotalsLoaded, poolTotalsLoading, tab]);
-
-  useEffect(() => {
     if (!id || !detail || tab !== "context" || ticketContextLoading || ticketContext !== null || Boolean(ticketContextError)) {
       return;
     }
     void loadTicketContext(id);
   }, [detail, id, tab, ticketContext, ticketContextError, ticketContextLoading]);
+
+  useEffect(() => {
+    if (!detail || searchParams.get("edit") !== "1") {
+      return;
+    }
+    if (detail.available_actions.includes("edit")) {
+      setEditing(true);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete("edit");
+    setSearchParams(next, { replace: true });
+  }, [detail, searchParams, setSearchParams]);
 
   const ticket = detail?.ticket;
 
@@ -804,12 +695,6 @@ export default function TicketDetailPage() {
     setOwnershipTargetId("");
   };
 
-  const refreshPoolTotalsAfterAction = (action: string) => {
-    if (["claim", "move_to_pool", "assign", "escalate_pool", "escalate_user"].includes(action)) {
-      void loadPoolTotals();
-    }
-  };
-
   const handleAction = async (action: string) => {
     if (!id || !detail) return;
     if (action === "edit") {
@@ -828,7 +713,6 @@ export default function TicketDetailPage() {
         version: detail.ticket.version
       });
       setDetail(payload);
-      refreshPoolTotalsAfterAction(action);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Action failed");
     } finally {
@@ -863,7 +747,6 @@ export default function TicketDetailPage() {
         });
       }
       setDetail(payload);
-      refreshPoolTotalsAfterAction(ownershipAction);
       setOwnershipAction(null);
       setOwnershipNote("");
       setOwnershipError("");
@@ -1294,17 +1177,11 @@ export default function TicketDetailPage() {
                   </div>
                 ) : (
                   <div className="space-y-4 px-5 py-5">
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                       <InfoCard label={language === "zh" ? "关联告警数" : "Linked Alerts"} value={alertLookup.alarm_ids.length} />
                       <InfoCard label={language === "zh" ? "命中告警数" : "Matched Alerts"} value={alertLookup.alarm_ids.length - alertLookup.missing_alarm_ids.length} />
                       <InfoCard label={language === "zh" ? "缺失告警数" : "Missing Alerts"} value={alertLookup.missing_alarm_ids.length} />
                       <InfoCard label={language === "zh" ? "数据表" : "Table"} value={alertLookup.table_name ?? "-"} />
-                      <PoolTotalsCard
-                        language={language}
-                        totals={poolTotals}
-                        loading={poolTotalsLoading}
-                        errorMessage={poolTotalsError}
-                      />
                     </div>
 
                     {alertLookup.missing_alarm_ids.length > 0 ? (

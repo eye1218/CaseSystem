@@ -10,7 +10,8 @@ FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    CASESYSTEM_SOURCE_ROOT=/workspace
 
 WORKDIR /app
 
@@ -23,7 +24,7 @@ RUN chmod +x /app/docker/*.sh \
     && python -m pip install --upgrade pip \
     && python -m pip install .
 
-RUN mkdir -p /app/.runtime/report-storage
+RUN mkdir -p /app/.runtime/report-storage /workspace
 
 EXPOSE 8010
 

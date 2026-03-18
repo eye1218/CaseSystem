@@ -1,6 +1,16 @@
 #!/bin/sh
 set -eu
 
-. /app/docker/runtime-env.sh
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+. "${SCRIPT_DIR}/runtime-env.sh"
 
-exec celery -A app.worker.celery_app.celery_app beat --loglevel "${CELERY_LOGLEVEL:-INFO}"
+SOURCE_ROOT="${CASESYSTEM_SOURCE_ROOT:-/workspace}"
+APP_DIR="${CASESYSTEM_APP_DIR:-${SOURCE_ROOT}/backend}"
+
+if [ ! -d "${APP_DIR}" ]; then
+  APP_DIR="/app/backend"
+fi
+
+export PYTHONPATH="${APP_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
+
+exec celery --workdir "${APP_DIR}" -A app.worker.celery_app.celery_app beat --loglevel "${CELERY_LOGLEVEL:-INFO}"

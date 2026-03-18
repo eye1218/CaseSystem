@@ -801,7 +801,7 @@ function DeadlineCell({
 
 function FilterField({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="grid gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+    <label className="flex flex-col gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
       <span>{label}</span>
       {children}
     </label>
@@ -818,7 +818,7 @@ function FilterToggleGroup({
   onToggle: (value: string) => void;
 }) {
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap content-start gap-2">
       {options.map((option) => {
         const active = selectedValues.includes(option.value);
         return (
@@ -826,7 +826,7 @@ function FilterToggleGroup({
             key={option.value}
             type="button"
             onClick={() => onToggle(option.value)}
-            className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+            className={`h-fit whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
               active
                 ? "border-blue-300 bg-blue-100 text-blue-700 dark:border-blue-700 dark:bg-blue-950/50 dark:text-blue-300"
                 : "border-slate-300 bg-white text-slate-600 hover:border-slate-400 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:text-white"

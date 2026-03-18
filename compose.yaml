@@ -31,6 +31,7 @@ x-app-service: &app-service
   environment: *app-environment
   volumes:
     - runtime-data:/app/.runtime
+    - ./:/workspace
   depends_on:
     postgres:
       condition: service_healthy
@@ -69,7 +70,7 @@ services:
     <<: *app-service
     profiles: ["init"]
     restart: "no"
-    command: ["python", "/app/docker/bootstrap_runtime.py"]
+    command: ["python", "/workspace/docker/bootstrap_runtime.py"]
     volumes:
       - runtime-data:/app/.runtime
       - ./:/workspace:ro
@@ -80,7 +81,7 @@ services:
   api:
     <<: *app-service
     restart: unless-stopped
-    command: ["/app/docker/api-entrypoint.sh"]
+    command: ["/workspace/docker/api-entrypoint.sh"]
     ports:
       - "${APP_PORT:-8010}:8010"
     healthcheck:
@@ -98,12 +99,12 @@ services:
   worker:
     <<: *app-service
     restart: unless-stopped
-    command: ["/app/docker/worker-entrypoint.sh"]
+    command: ["/workspace/docker/worker-entrypoint.sh"]
 
   beat:
     <<: *app-service
     restart: unless-stopped
-    command: ["/app/docker/beat-entrypoint.sh"]
+    command: ["/workspace/docker/beat-entrypoint.sh"]
 
 volumes:
   postgres-data:

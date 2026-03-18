@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NPM_CACHE_DIR="${NPM_CACHE_DIR:-${ROOT_DIR}/.npm-cache}"
 LOCAL_PYTHON="${LOCAL_PYTHON:-}"
 
-REMOTE_HOST="${REMOTE_HOST:-192.168.2.170}"
+REMOTE_HOST="${REMOTE_HOST:-192.168.20.142}"
 REMOTE_USER="${REMOTE_USER:-root}"
 REMOTE_DIR="${REMOTE_DIR:-/root/workspace/CaseSystem}"
 SERVICE_NAME="${SERVICE_NAME:-casesystem-preview}"

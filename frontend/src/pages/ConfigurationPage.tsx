@@ -1,12 +1,14 @@
 import {
   Database,
   Bell,
+  Clock3,
   ChevronRight,
   FileCog,
   FileCode,
   Lock,
   Mail,
-  Settings
+  Settings,
+  Ticket
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
@@ -27,6 +29,28 @@ interface SubModule {
 }
 
 const SUB_MODULES: SubModule[] = [
+  {
+    id: "ticket-config",
+    titleZh: "工单配置",
+    titleEn: "Ticket Config",
+    descZh: "维护工单分类与优先级配置，支持增删改查操作。",
+    descEn: "Manage ticket categories and priority configurations with CRUD operations.",
+    path: "/configuration/ticket-config",
+    icon: <Ticket className="h-5 w-5 text-blue-500" />,
+    tags: ["Ticket", "Category", "Priority"],
+    adminOnly: true
+  },
+  {
+    id: "sla-policies",
+    titleZh: "SLA 策略配置",
+    titleEn: "SLA Policies",
+    descZh: "按优先级配置响应与处置时间，支持新增优先级并统一维护 SLA 时限基线。",
+    descEn: "Configure response and resolution windows by priority, including new custom priority levels.",
+    path: "/configuration/sla-policies",
+    icon: <Clock3 className="h-5 w-5 text-blue-500" />,
+    tags: ["SLA", "Priority", "Deadline"],
+    adminOnly: true
+  },
   {
     id: "report-templates",
     titleZh: "报告模板",
@@ -85,12 +109,6 @@ const SUB_MODULES: SubModule[] = [
 ];
 
 const PLACEHOLDER_MODULES = [
-  {
-    titleZh: "SLA 策略配置",
-    titleEn: "SLA Policy",
-    descZh: "配置工单响应与处置时限规则",
-    descEn: "Configure response and resolution SLA policies"
-  },
   {
     titleZh: "告警规则配置",
     titleEn: "Alert Rules",

@@ -24,6 +24,8 @@ import AlertSourcesPage from "../pages/AlertSourcesPage";
 import MailSendersPage from "../pages/MailSendersPage";
 import ReportTemplatesPage from "../pages/ReportTemplatesPage";
 import ReportsPage from "../pages/ReportsPage";
+import SlaConfigurationPage from "../pages/SlaConfigurationPage";
+import TicketConfigPage from "../pages/TicketConfigPage";
 import TasksPage from "../pages/TasksPage";
 import TaskTemplatesPage from "../pages/TaskTemplatesPage";
 import TemplateRenderingPage from "../pages/TemplateRenderingPage";
@@ -189,6 +191,22 @@ export const router = createBrowserRouter([
         element: (
           <RequireAdminRoute>
             <AlertSourcesPage />
+          </RequireAdminRoute>
+        )
+      },
+      {
+        path: "configuration/ticket-config",
+        element: (
+          <RequireAdminRoute>
+            <TicketConfigPage />
+          </RequireAdminRoute>
+        )
+      },
+      {
+        path: "configuration/sla-policies",
+        element: (
+          <RequireAdminRoute>
+            <SlaConfigurationPage />
           </RequireAdminRoute>
         )
       },

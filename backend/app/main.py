@@ -19,6 +19,7 @@ from .modules.knowledge.routes import knowledge_router
 from .modules.kpi.routes import kpi_router
 from .modules.audit.routes import audit_router
 from .modules.alert_sources.routes import alert_source_router
+from .modules.config.routes import config_router
 from .modules.mail_senders.routes import mail_sender_router
 from .modules.realtime.routes import realtime_router
 from .modules.tasks.routes import task_router
@@ -393,6 +394,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(report_router)
     app.include_router(kpi_router)
     app.include_router(audit_router)
+    app.include_router(config_router)
 
     if frontend_dist is not None:
         app.mount(

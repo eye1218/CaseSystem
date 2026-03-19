@@ -1,4 +1,4 @@
-import type { TicketClaimStatus, TicketMainStatus, TicketPriority } from "../../types/ticket";
+import type { TicketClaimStatus, TicketMainStatus, TicketPriority, TicketSubStatus } from "../../types/ticket";
 
 export interface TicketQueryParams {
   ticketId?: string;
@@ -7,7 +7,7 @@ export interface TicketQueryParams {
   mainStatuses?: TicketMainStatus[];
   claimStatuses?: TicketClaimStatus[];
   poolCodes?: string[];
-  subStatus?: string;
+  subStatuses?: TicketSubStatus[];
   createdFrom?: string;
   createdTo?: string;
   sortBy?: string;
@@ -33,7 +33,7 @@ export function buildTicketListPath(query: TicketQueryParams): string {
   appendValues("main_status", query.mainStatuses);
   appendValues("claim_status", query.claimStatuses);
   appendValues("pool_code", query.poolCodes);
-  if (query.subStatus && query.subStatus !== "all") params.set("sub_status", query.subStatus);
+  appendValues("sub_status", query.subStatuses);
   if (query.createdFrom) params.set("created_from", query.createdFrom);
   if (query.createdTo) params.set("created_to", query.createdTo);
   if (query.sortBy) params.set("sort_by", query.sortBy);

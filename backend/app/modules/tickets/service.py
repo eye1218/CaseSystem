@@ -151,7 +151,7 @@ def list_tickets(
     category_ids: list[str] | None = None,
     priorities: list[str] | None = None,
     main_statuses: list[str] | None = None,
-    sub_status: str | None = None,
+    sub_statuses: list[str] | None = None,
     claim_statuses: list[str] | None = None,
     pool_codes: list[str] | None = None,
     created_from: datetime | None = None,
@@ -175,8 +175,8 @@ def list_tickets(
         conditions.append(Ticket.priority.in_(priorities))
     if main_statuses:
         conditions.append(Ticket.main_status.in_(main_statuses))
-    if sub_status:
-        conditions.append(Ticket.sub_status == sub_status)
+    if sub_statuses:
+        conditions.append(Ticket.sub_status.in_(sub_statuses))
     if pool_codes:
         conditions.append(Ticket.current_pool_code.in_(pool_codes))
     if claim_statuses:

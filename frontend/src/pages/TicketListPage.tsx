@@ -14,7 +14,7 @@ import {
   getTicketDeadlinePresentation,
   useTicketDeadlineClock,
 } from "../features/tickets/deadlines";
-import type { TicketClaimStatus, TicketMainStatus, TicketPriority, TicketSummary } from "../types/ticket";
+import type { TicketClaimStatus, TicketMainStatus, TicketPriority, TicketSubStatus, TicketSummary } from "../types/ticket";
 import { formatApiDateTime } from "../utils/datetime";
 
 type SortField = "id" | "priority" | "risk_score" | "created_at" | "response_deadline_at" | "resolution_deadline_at";
@@ -34,6 +34,15 @@ const mainStatusOptions = [
   "IN_PROGRESS",
   "RESOLVED",
   "CLOSED"
+];
+const subStatusOptions: TicketSubStatus[] = [
+  "NONE",
+  "RESPONSE_TIMEOUT",
+  "RESOLUTION_TIMEOUT",
+  "ESCALATION_PENDING_CONFIRM",
+  "ESCALATION_CONFIRMED",
+  "ESCALATION_REJECTED",
+  "REOPENED"
 ];
 const poolOptions = [
   { value: "T1_POOL", zh: "T1 工单池", en: "T1 Pool" },
@@ -190,6 +199,32 @@ function riskClass(score: number) {
   return "text-emerald-600 dark:text-emerald-400";
 }
 
+function subStatusLabel(status: TicketSubStatus): string {
+  const labels: Record<TicketSubStatus, string> = {
+    NONE: "无",
+    RESPONSE_TIMEOUT: "响应超时",
+    RESOLUTION_TIMEOUT: "处置超时",
+    ESCALATION_PENDING_CONFIRM: "等待升级确认",
+    ESCALATION_CONFIRMED: "升级已确认",
+    ESCALATION_REJECTED: "升级已拒绝",
+    REOPENED: "已重开"
+  };
+  return labels[status] ?? status;
+}
+
+function subStatusLabelEn(status: TicketSubStatus): string {
+  const labels: Record<TicketSubStatus, string> = {
+    NONE: "None",
+    RESPONSE_TIMEOUT: "Response Timeout",
+    RESOLUTION_TIMEOUT: "Resolution Timeout",
+    ESCALATION_PENDING_CONFIRM: "Escalation Pending",
+    ESCALATION_CONFIRMED: "Escalation Confirmed",
+    ESCALATION_REJECTED: "Escalation Rejected",
+    REOPENED: "Reopened"
+  };
+  return labels[status] ?? status;
+}
+
 function RiskBar({ score }: { score: number }) {
   const tone = score >= 90 ? "bg-red-500" : score >= 70 ? "bg-orange-500" : score >= 40 ? "bg-yellow-500" : "bg-emerald-500";
   return (
@@ -234,6 +269,7 @@ export default function TicketListPage({ assignedToMeOnly = false }: TicketListP
   const [filterCategoryIds, setFilterCategoryIds] = useState<string[]>([]);
   const [filterPriorities, setFilterPriorities] = useState<TicketPriority[]>([]);
   const [filterStatuses, setFilterStatuses] = useState<TicketMainStatus[]>([]);
+  const [filterSubStatuses, setFilterSubStatuses] = useState<TicketSubStatus[]>([]);
   const [filterClaimStatuses, setFilterClaimStatuses] = useState<TicketClaimStatus[]>(() =>
     assignedToMeOnly ? [] : ["unclaimed"]
   );
@@ -263,6 +299,7 @@ export default function TicketListPage({ assignedToMeOnly = false }: TicketListP
       categoryIds: filterCategoryIds.length > 0 ? filterCategoryIds : undefined,
       priorities: filterPriorities.length > 0 ? filterPriorities : undefined,
       mainStatuses: filterStatuses.length > 0 ? filterStatuses : undefined,
+      subStatuses: filterSubStatuses.length > 0 ? filterSubStatuses : undefined,
       claimStatuses: filterClaimStatuses.length > 0 ? filterClaimStatuses : undefined,
       poolCodes: filterPoolCodes.length > 0 ? filterPoolCodes : undefined,
       createdFrom: dateRange.start || undefined,
@@ -279,6 +316,7 @@ export default function TicketListPage({ assignedToMeOnly = false }: TicketListP
       filterPoolCodes,
       filterPriorities,
       filterStatuses,
+      filterSubStatuses,
       forceAssignedToMe,
       searchTerm,
       sortDirection,
@@ -640,6 +678,17 @@ export default function TicketListPage({ assignedToMeOnly = false }: TicketListP
                   }))}
                   selectedValues={filterStatuses}
                   onToggle={(value) => setFilterStatuses((current) => toggleSelection(current, value as TicketMainStatus))}
+                />
+              </FilterField>
+
+              <FilterField label={language === "zh" ? "子状态" : "Sub Status"}>
+                <FilterToggleGroup
+                  options={subStatusOptions.map((status) => ({
+                    value: status,
+                    label: language === "zh" ? subStatusLabel(status) : subStatusLabelEn(status)
+                  }))}
+                  selectedValues={filterSubStatuses}
+                  onToggle={(value) => setFilterSubStatuses((current) => toggleSelection(current, value as TicketSubStatus))}
                 />
               </FilterField>
 

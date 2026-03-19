@@ -68,6 +68,25 @@ curl -k https://127.0.0.1:${HTTPS_PORT:-443}/healthz
 
 `-k` 用于跳过自签证书校验，仅建议在内网预览环境使用。
 
+## 一键部署脚本
+
+如果需要把“生成 `.env.docker`、生成自签证书、同步到远端、重启服务、烟测”收敛到一个命令，可以直接使用：
+
+```bash
+REMOTE_HOST=192.168.2.90 \
+PUBLIC_HOST=casesystem.example.com \
+./scripts/deploy_tls_docker.sh
+```
+
+说明：
+
+- `REMOTE_HOST` 必填
+- `PUBLIC_HOST` 不填时默认等于 `REMOTE_HOST`
+- `POSTGRES_PASSWORD` 和 `CASESYSTEM_JWT_SECRET_KEY` 未提供时会自动生成
+- `CASESYSTEM_SMTP_PASSWORD` 不会自动生成
+- 如果保留了示例里的 SMTP 配置，但没提供 `CASESYSTEM_SMTP_PASSWORD`，脚本会直接失败
+- 全过程不会等待人工输入
+
 ## Redis 用途
 
 - `redis://redis:6379/0`：Celery broker

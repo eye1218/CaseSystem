@@ -9,6 +9,7 @@ from app.modules.events import service as event_service
 from app.modules.events.enums import EventQueueStatus, EventQueueType
 from app.modules.events.models import Event, EventBinding, EventRule
 from app.modules.events.service import claim_due_pending_event_with_bindings
+from app.modules.realtime.models import UserNotification
 from app.modules.events.tasks import sweep_due_events
 from app.modules.tickets.models import Ticket
 from app.security import utcnow
@@ -134,6 +135,12 @@ def post_ticket_action(client, ticket_id: int, action: str, note: str) -> None:
         headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
     )
     assert response.status_code == 200, response.text
+
+
+def to_naive_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def test_compute_dispatch_time_accepts_timezone_aware_ticket_created_at():
@@ -581,6 +588,193 @@ def test_response_timeout_rules_dispatch_on_due_signal(client, db_session_factor
 
     assert result["claimed_count"] >= 1
     assert result["dispatched_count"] >= 1
+
+
+def test_timeout_reminder_signal_dispatches_notification_to_assignee(
+    client, db_session_factory
+):
+    login(client, "admin", "AdminPass123")
+    switch_to_admin_role(client)
+
+    ticket_csrf = issue_csrf(client)
+    response = client.post(
+        "/api/v1/tickets",
+        json={
+            "title": "提醒推送给负责人",
+            "description": "验证分配后提醒推送给负责人",
+            "category_id": "intrusion",
+            "priority": "P1",
+            "risk_score": 95,
+        },
+        headers={"X-CSRF-Token": ticket_csrf, "Origin": "https://testserver"},
+    )
+    assert response.status_code == 200, response.text
+    ticket_id = response.json()["ticket"]["id"]
+
+    detail = client.get(f"/api/v1/tickets/{ticket_id}/detail")
+    assert detail.status_code == 200, detail.text
+    version = detail.json()["ticket"]["version"]
+
+    assign_csrf = issue_csrf(client)
+    assign_response = client.post(
+        f"/api/v1/tickets/{ticket_id}/assign",
+        json={
+            "version": version,
+            "target_user_id": "user-analyst",
+            "note": "assign for reminder test",
+        },
+        headers={"X-CSRF-Token": assign_csrf, "Origin": "https://testserver"},
+    )
+    assert assign_response.status_code == 200, assign_response.text
+
+    with db_session_factory() as db:
+        reminder_event = next(
+            event
+            for event in db.scalars(select(Event).order_by(Event.created_at.asc())).all()
+            if event.payload.get("kind") == "ticket_timeout_reminder_signal"
+            and event.payload.get("ticket_id") == ticket_id
+            and event.payload.get("reminder_kind") == "response"
+            and event.status == EventQueueStatus.PENDING.value
+        )
+        reminder_event.trigger_time = utcnow() - timedelta(seconds=1)
+        db.commit()
+
+    result = sweep_due_events()
+    assert result["claimed_count"] >= 1
+
+    with db_session_factory() as db:
+        reminders = list(
+            db.scalars(
+                select(UserNotification)
+                .where(UserNotification.category == "ticket_timeout_response_reminder")
+                .where(UserNotification.related_resource_id == str(ticket_id))
+            ).all()
+        )
+
+    assert len(reminders) == 1
+    assert reminders[0].user_id == "user-analyst"
+    assert reminders[0].action_payload.get("ticket_id") == ticket_id
+    assert reminders[0].action_payload.get("reminder_kind") == "response"
+
+
+def test_timeout_reminder_signal_dispatches_to_pool_role_when_unassigned(
+    client, db_session_factory
+):
+    login(client, "admin", "AdminPass123")
+    switch_to_admin_role(client)
+
+    ticket_csrf = issue_csrf(client)
+    response = client.post(
+        "/api/v1/tickets",
+        json={
+            "title": "提醒推送到池子",
+            "description": "验证无人认领时提醒推送给同级池角色",
+            "category_id": "intrusion",
+            "priority": "P1",
+            "risk_score": 90,
+        },
+        headers={"X-CSRF-Token": ticket_csrf, "Origin": "https://testserver"},
+    )
+    assert response.status_code == 200, response.text
+    ticket_id = response.json()["ticket"]["id"]
+
+    with db_session_factory() as db:
+        reminder_event = next(
+            event
+            for event in db.scalars(select(Event).order_by(Event.created_at.asc())).all()
+            if event.payload.get("kind") == "ticket_timeout_reminder_signal"
+            and event.payload.get("ticket_id") == ticket_id
+            and event.payload.get("reminder_kind") == "response"
+            and event.status == EventQueueStatus.PENDING.value
+        )
+        reminder_event.trigger_time = utcnow() - timedelta(seconds=1)
+        db.commit()
+
+    sweep_due_events()
+
+    with db_session_factory() as db:
+        reminders = list(
+            db.scalars(
+                select(UserNotification)
+                .where(UserNotification.category == "ticket_timeout_response_reminder")
+                .where(UserNotification.related_resource_id == str(ticket_id))
+                .order_by(UserNotification.created_at.asc())
+            ).all()
+        )
+
+    assert len(reminders) == 1
+    assert reminders[0].user_id == "user-analyst"
+
+
+def test_updating_timeout_reminder_config_rebuilds_active_ticket_reminder_events(
+    client, db_session_factory
+):
+    login(client, "admin", "AdminPass123")
+    switch_to_admin_role(client)
+
+    ticket_csrf = issue_csrf(client)
+    response = client.post(
+        "/api/v1/tickets",
+        json={
+            "title": "配置变更重算提醒",
+            "description": "验证提醒配置变更后重算存量工单提醒",
+            "category_id": "intrusion",
+            "priority": "P1",
+            "risk_score": 88,
+        },
+        headers={"X-CSRF-Token": ticket_csrf, "Origin": "https://testserver"},
+    )
+    assert response.status_code == 200, response.text
+    ticket_id = response.json()["ticket"]["id"]
+
+    with db_session_factory() as db:
+        ticket = db.get(Ticket, ticket_id)
+        assert ticket is not None
+        response_deadline = to_naive_utc(ticket.response_deadline_at)
+
+        initial_pending_response_events = [
+            event
+            for event in db.scalars(select(Event).order_by(Event.created_at.asc())).all()
+            if event.payload.get("kind") == "ticket_timeout_reminder_signal"
+            and event.payload.get("ticket_id") == ticket_id
+            and event.payload.get("reminder_kind") == "response"
+            and event.status == EventQueueStatus.PENDING.value
+        ]
+        assert len(initial_pending_response_events) == 1
+
+    config_csrf = issue_csrf(client)
+    config_response = client.put(
+        "/api/v1/config/ticket.timeout_reminder/DEFAULT",
+        json={
+            "value": {
+                "response_reminder_minutes": 2,
+                "resolution_reminder_minutes": 12,
+            },
+        },
+        headers={"X-CSRF-Token": config_csrf, "Origin": "https://testserver"},
+    )
+    assert config_response.status_code == 200, config_response.text
+
+    with db_session_factory() as db:
+        response_events = [
+            event
+            for event in db.scalars(select(Event).order_by(Event.created_at.asc())).all()
+            if event.payload.get("kind") == "ticket_timeout_reminder_signal"
+            and event.payload.get("ticket_id") == ticket_id
+            and event.payload.get("reminder_kind") == "response"
+        ]
+
+    pending_response_events = [
+        event for event in response_events if event.status == EventQueueStatus.PENDING.value
+    ]
+    cancelled_response_events = [
+        event for event in response_events if event.status == EventQueueStatus.CANCELLED.value
+    ]
+    assert len(pending_response_events) == 1
+    assert len(cancelled_response_events) >= 1
+
+    expected_trigger_time = response_deadline - timedelta(minutes=2)
+    assert pending_response_events[0].trigger_time == expected_trigger_time
 
 
 def test_reopen_recreates_pending_timeout_events(client, db_session_factory):

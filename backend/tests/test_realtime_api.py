@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from app.modules.realtime import socket_server
 from app.security import decode_access_token
 
@@ -48,6 +50,30 @@ def test_realtime_gateway_is_reused_after_socket_app_creation(
         assert configured_gateway.sio is initial_sio
     finally:
         socket_server._gateway = original_gateway
+
+
+def test_emit_to_user_sync_reuses_same_background_loop(test_settings, monkeypatch):
+    gateway = socket_server.RealtimeGateway(test_settings)
+    emit_loops: list[asyncio.AbstractEventLoop] = []
+
+    async def fake_emit(*_args, **_kwargs) -> None:
+        emit_loops.append(asyncio.get_running_loop())
+
+    monkeypatch.setattr(gateway.sio, "emit", fake_emit)
+
+    try:
+        for index in range(6):
+            gateway.emit_to_user_sync(
+                "notification.created",
+                {"index": index},
+                user_id="user-analyst",
+            )
+    finally:
+        gateway.close()
+
+    assert len(emit_loops) == 6
+    first_loop = emit_loops[0]
+    assert all(loop is first_loop for loop in emit_loops)
 
 
 def test_admin_can_create_list_and_read_notifications(client):

@@ -1,4 +1,4 @@
-import { Bell, ChevronDown, KeyRound, Languages, LogOut, Moon, Sun, User } from "lucide-react";
+import { Bell, ChevronDown, KeyRound, Languages, LogOut, Moon, Sun, User, Volume2, VolumeX } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 
@@ -25,7 +25,7 @@ const routeTitleMap: Record<string, string> = {
 export default function AppHeader() {
   const { user, logout, switchRole } = useAuth();
   const { language, toggleLanguage, t } = useLanguage();
-  const { realtimeStatus, unreadCount } = useRealtime();
+  const { realtimeStatus, unreadCount, soundEnabled, toggleSoundEnabled } = useRealtime();
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
@@ -104,6 +104,20 @@ export default function AppHeader() {
             </span>
           )}
         </Link>
+
+        <button
+          onClick={toggleSoundEnabled}
+          className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
+            soundEnabled
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+              : "border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          }`}
+          aria-label={soundEnabled ? "mute notifications" : "unmute notifications"}
+          title={soundEnabled ? (language === "zh" ? "关闭通知音" : "Mute notifications") : language === "zh" ? "开启通知音" : "Unmute notifications"}
+        >
+          {soundEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+          <span>{language === "zh" ? "通知音" : "Sound"}</span>
+        </button>
 
         {user.roles.length > 1 && (
           <div className="relative">

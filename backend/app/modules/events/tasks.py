@@ -10,6 +10,7 @@ from ...worker.celery_app import celery_app
 from ...worker.task_base import db_session
 from ..tasks.service import create_task_instance_for_binding, execute_task_instance
 from .service import (
+    dispatch_timeout_reminder_signal,
     dispatch_timeout_signal,
     list_due_pending_event_ids,
     trigger_due_pending_event_with_bindings,
@@ -84,6 +85,22 @@ def sweep_due_events(batch_size: int = 100) -> dict[str, int]:
                     if signatures:
                         group(signatures).apply_async()
                         dispatched_count += len(signatures)
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    raise
+            claimed_count += 1
+            continue
+
+        if event.payload.get("kind") == "ticket_timeout_reminder_signal":
+            with db_session() as db:
+                try:
+                    delivered_count = dispatch_timeout_reminder_signal(
+                        db,
+                        signal_event=event,
+                        occurred_at=due_at,
+                    )
+                    dispatched_count += delivered_count
                     db.commit()
                 except Exception:
                     db.rollback()

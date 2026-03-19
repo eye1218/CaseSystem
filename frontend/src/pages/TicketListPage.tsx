@@ -644,7 +644,7 @@ export default function TicketListPage({ assignedToMeOnly = false }: TicketListP
   };
 
   return (
-    <div className="flex h-full flex-col gap-6 p-6">
+    <div className="ticket-font-scope flex h-full flex-col gap-6 p-6">
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
         <MetricCard title={t("ticket.metrics.visible")} value={`${items.length} / ${filteredCount}`} subtitle={visibleMetricSubtitle} />
         <MetricCard title={t("ticket.metrics.waiting")} value={String(metrics.waiting)} subtitle="当前处于待响应状态的工单" />

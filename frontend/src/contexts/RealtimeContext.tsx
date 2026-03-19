@@ -11,6 +11,15 @@ import type {
   NotificationUpdatedEvent,
   TicketChangedEvent
 } from "../types/notification";
+import {
+  loadSoundEnabledSetting,
+  persistSoundEnabledSetting,
+  playNotificationCreatedSound,
+} from "../features/notifications/sound";
+import {
+  collectNewUnplayedNotifications,
+  sortNotificationsByCreatedAt,
+} from "../features/notifications/realtimePolling";
 import { useAuth } from "./AuthContext";
 
 type RealtimeStatus = "disconnected" | "connecting" | "connected" | "error";
@@ -19,12 +28,16 @@ interface RealtimeContextValue {
   notifications: NotificationSummary[];
   unreadCount: number;
   realtimeStatus: RealtimeStatus;
+  soundEnabled: boolean;
   lastTicketEvent: TicketChangedEvent | null;
   refreshNotifications: () => Promise<void>;
   markAsRead: (notificationId: string) => Promise<void>;
+  toggleSoundEnabled: () => void;
+  setSoundEnabled: (value: boolean) => void;
 }
 
 const RealtimeContext = createContext<RealtimeContextValue | null>(null);
+const NOTIFICATION_POLL_INTERVAL_MS = 15_000;
 
 function mapNotificationEvent(event: NotificationCreatedEvent): NotificationSummary {
   return {
@@ -52,21 +65,22 @@ function upsertNotification(
   nextNotification: NotificationSummary
 ) {
   const remaining = notifications.filter((item) => item.id !== nextNotification.id);
-  return [nextNotification, ...remaining].sort((left, right) =>
-    right.created_at.localeCompare(left.created_at)
-  );
+  return sortNotificationsByCreatedAt([nextNotification, ...remaining]);
 }
 
 export function RealtimeProvider({ children }: { children: ReactNode }) {
   const { authReady, isAuthenticated, user } = useAuth();
   const [notifications, setNotifications] = useState<NotificationSummary[]>([]);
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>("disconnected");
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(() => loadSoundEnabledSetting());
   const [lastTicketEvent, setLastTicketEvent] = useState<TicketChangedEvent | null>(null);
   const socketRef = useRef<Socket | null>(null);
+  const playedNotificationIdsRef = useRef<Set<string>>(new Set());
+  const soundEnabledRef = useRef(soundEnabled);
 
   const refreshNotifications = useCallback(async () => {
     const payload = await notificationApi.listNotifications();
-    setNotifications(payload.items);
+    setNotifications(sortNotificationsByCreatedAt(payload.items));
   }, []);
 
   const markAsRead = useCallback(async (notificationId: string) => {
@@ -75,6 +89,15 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       current.map((item) => (item.id === notificationId ? payload.notification : item))
     );
   }, []);
+
+  const toggleSoundEnabled = useCallback(() => {
+    setSoundEnabled((current) => !current);
+  }, []);
+
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+    persistSoundEnabledSetting(soundEnabled);
+  }, [soundEnabled]);
 
   useEffect(() => {
     if (!authReady) {
@@ -87,11 +110,50 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       setNotifications([]);
       setRealtimeStatus("disconnected");
       setLastTicketEvent(null);
+      playedNotificationIdsRef.current.clear();
       return;
     }
 
     let disposed = false;
     let socket: Socket | null = null;
+    let pollTimer: number | undefined;
+    let pollingInFlight = false;
+
+    async function syncNotificationsWithServer() {
+      if (pollingInFlight) {
+        return;
+      }
+      pollingInFlight = true;
+      try {
+        const payload = await notificationApi.listNotifications();
+        if (disposed) {
+          return;
+        }
+
+        let discovered: NotificationSummary[] = [];
+        const sortedItems = sortNotificationsByCreatedAt(payload.items);
+        setNotifications((current) => {
+          discovered = collectNewUnplayedNotifications(
+            current,
+            sortedItems,
+            playedNotificationIdsRef.current,
+          );
+          return sortedItems;
+        });
+        if (discovered.length > 0) {
+          for (const item of discovered) {
+            playedNotificationIdsRef.current.add(item.id);
+          }
+          if (soundEnabledRef.current) {
+            void playNotificationCreatedSound(discovered[0]);
+          }
+        }
+      } catch {
+        // Keep websocket as primary transport; polling is best-effort fallback.
+      } finally {
+        pollingInFlight = false;
+      }
+    }
 
     async function bootstrap() {
       setRealtimeStatus("connecting");
@@ -104,7 +166,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        setNotifications(notificationPayload.items);
+        setNotifications(sortNotificationsByCreatedAt(notificationPayload.items));
         socketRef.current?.disconnect();
         socket = io(window.location.origin, {
           path: "/socket.io",
@@ -144,6 +206,12 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
           }
           const notification = mapNotificationEvent(event);
           setNotifications((current) => upsertNotification(current, notification));
+          if (!playedNotificationIdsRef.current.has(notification.id)) {
+            playedNotificationIdsRef.current.add(notification.id);
+            if (soundEnabledRef.current) {
+              void playNotificationCreatedSound(notification);
+            }
+          }
           socket?.emit("notification.ack", { notification_id: notification.id });
         });
 
@@ -166,6 +234,10 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
             )
           );
         });
+
+        pollTimer = window.setInterval(() => {
+          void syncNotificationsWithServer();
+        }, NOTIFICATION_POLL_INTERVAL_MS);
       } catch {
         if (!disposed) {
           setRealtimeStatus("error");
@@ -177,6 +249,9 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
 
     return () => {
       disposed = true;
+      if (pollTimer !== undefined) {
+        window.clearInterval(pollTimer);
+      }
       socket?.disconnect();
       if (socketRef.current === socket) {
         socketRef.current = null;
@@ -189,11 +264,22 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       notifications,
       unreadCount: notifications.filter((item) => item.status !== "read").length,
       realtimeStatus,
+      soundEnabled,
       lastTicketEvent,
       refreshNotifications,
-      markAsRead
+      markAsRead,
+      toggleSoundEnabled,
+      setSoundEnabled
     }),
-    [lastTicketEvent, markAsRead, notifications, realtimeStatus, refreshNotifications]
+    [
+      lastTicketEvent,
+      markAsRead,
+      notifications,
+      realtimeStatus,
+      refreshNotifications,
+      soundEnabled,
+      toggleSoundEnabled,
+    ]
   );
 
   return <RealtimeContext.Provider value={value}>{children}</RealtimeContext.Provider>;

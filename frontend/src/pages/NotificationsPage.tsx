@@ -1,4 +1,4 @@
-import { Bell, CheckCheck, ExternalLink, RefreshCw } from "lucide-react";
+import { Bell, CheckCheck, ExternalLink, RefreshCw, Volume2, VolumeX } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -22,7 +22,15 @@ function statusTone(status: NotificationSummary["status"]) {
 
 export default function NotificationsPage() {
   const { language, t } = useLanguage();
-  const { notifications, unreadCount, refreshNotifications, markAsRead, realtimeStatus } = useRealtime();
+  const {
+    notifications,
+    unreadCount,
+    refreshNotifications,
+    markAsRead,
+    realtimeStatus,
+    soundEnabled,
+    setSoundEnabled,
+  } = useRealtime();
   const [loading, setLoading] = useState(true);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [submittingActionId, setSubmittingActionId] = useState<string | null>(null);
@@ -128,13 +136,27 @@ export default function NotificationsPage() {
             </div>
           </div>
 
-          <button
-            onClick={() => void refreshNotifications()}
-            className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm text-slate-600 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-          >
-            <RefreshCw className="h-4 w-4" />
-            {language === "zh" ? "刷新" : "Refresh"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSoundEnabled(!soundEnabled)}
+              className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm transition-colors ${
+                soundEnabled
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+                  : "border-slate-300 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              }`}
+            >
+              {soundEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+              {language === "zh" ? "通知音" : "Notification Sound"}
+              <span className="text-xs opacity-80">{soundEnabled ? (language === "zh" ? "开启" : "On") : language === "zh" ? "关闭" : "Off"}</span>
+            </button>
+            <button
+              onClick={() => void refreshNotifications()}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-2.5 text-sm text-slate-600 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              <RefreshCw className="h-4 w-4" />
+              {language === "zh" ? "刷新" : "Refresh"}
+            </button>
+          </div>
         </div>
 
         <div className="max-h-[calc(100vh-20rem)] overflow-auto px-5 py-5">

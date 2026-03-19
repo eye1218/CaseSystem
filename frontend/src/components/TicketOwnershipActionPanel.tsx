@@ -55,8 +55,8 @@ export default function TicketOwnershipActionPanel({
           ? "该操作会向目标用户发送必须处理的通知，等待对方接受或拒绝。"
           : "This sends an action-required notification to the target user and waits for accept/reject."
         : language === "zh"
-          ? "该操作不需要确认，会立即把工单切换到上一级池子。"
-          : "This requires no confirmation and immediately moves the ticket to the next pool.";
+          ? "提交后会再次确认，并将工单切换到上一级池子。"
+          : "After a confirmation prompt, this moves the ticket to the next pool.";
 
   return (
     <section className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50">

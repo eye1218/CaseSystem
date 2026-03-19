@@ -16,6 +16,8 @@ from .schemas import (
 )
 from .service import (
     ConfigOperationError,
+    TICKET_TIMEOUT_REMINDER_CATEGORY,
+    TICKET_TIMEOUT_REMINDER_KEY,
     create_config,
     delete_config,
     get_config,
@@ -23,8 +25,30 @@ from .service import (
     list_categories,
     update_config,
 )
+from ..events.service import (
+    rebuild_timeout_reminder_events_for_active_tickets,
+    resolve_ticket_timeout_reminder_minutes,
+)
 
 config_router = APIRouter(prefix="/api/v1/config", tags=["config"])
+
+
+def _sync_timeout_reminder_events_if_needed(
+    db: Session,
+    *,
+    category: str,
+    key: str,
+) -> None:
+    if category != TICKET_TIMEOUT_REMINDER_CATEGORY:
+        return
+    if key.strip().upper() != TICKET_TIMEOUT_REMINDER_KEY:
+        return
+    response_minutes, resolution_minutes = resolve_ticket_timeout_reminder_minutes(db)
+    rebuild_timeout_reminder_events_for_active_tickets(
+        db,
+        response_reminder_minutes=response_minutes,
+        resolution_reminder_minutes=resolution_minutes,
+    )
 
 
 @config_router.get("/categories", response_model=list[str])
@@ -83,6 +107,7 @@ def config_create(
             value=payload.value,
             description=payload.description,
         )
+        _sync_timeout_reminder_events_if_needed(db, category=category, key=key)
         db.commit()
         return config
     except ConfigOperationError as e:
@@ -107,6 +132,7 @@ def config_update(
             description=payload.description,
             is_active=payload.is_active,
         )
+        _sync_timeout_reminder_events_if_needed(db, category=category, key=key)
         db.commit()
         return config
     except ConfigOperationError as e:
@@ -131,6 +157,7 @@ def config_update_patch(
             description=payload.description,
             is_active=payload.is_active,
         )
+        _sync_timeout_reminder_events_if_needed(db, category=category, key=key)
         db.commit()
         return config
     except ConfigOperationError as e:

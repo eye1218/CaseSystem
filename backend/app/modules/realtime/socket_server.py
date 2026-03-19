@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections.abc import Callable
+from concurrent.futures import TimeoutError as FutureTimeoutError
 
 import socketio
 from sqlalchemy.orm import Session
@@ -50,6 +52,9 @@ class RealtimeGateway:
         self.settings = settings
         self.session_factory = session_factory
         self.store: RealtimeStore = build_realtime_store(settings)
+        self._sync_loop_lock = threading.Lock()
+        self._sync_loop: asyncio.AbstractEventLoop | None = None
+        self._sync_loop_thread: threading.Thread | None = None
         self.sio = socketio.AsyncServer(
             async_mode="asgi",
             client_manager=manager,
@@ -171,9 +176,68 @@ class RealtimeGateway:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            asyncio.run(coroutine)
+            sync_loop = self._ensure_sync_loop()
+            future = asyncio.run_coroutine_threadsafe(coroutine, sync_loop)
+            try:
+                future.result(timeout=10)
+            except FutureTimeoutError as exc:
+                future.cancel()
+                raise RuntimeError("Timed out waiting for realtime emit task") from exc
             return
         loop.create_task(coroutine)
+
+    def close(self) -> None:
+        with self._sync_loop_lock:
+            loop = self._sync_loop
+            thread = self._sync_loop_thread
+            self._sync_loop = None
+            self._sync_loop_thread = None
+
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(loop.stop)
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1)
+
+    def _ensure_sync_loop(self) -> asyncio.AbstractEventLoop:
+        with self._sync_loop_lock:
+            if self._sync_loop is not None and self._sync_loop.is_running():
+                return self._sync_loop
+
+            loop_ready = threading.Event()
+            holder: dict[str, object] = {}
+
+            def loop_main() -> None:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                holder["loop"] = loop
+                loop_ready.set()
+                try:
+                    loop.run_forever()
+                finally:
+                    pending = asyncio.all_tasks(loop)
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        loop.run_until_complete(
+                            asyncio.gather(*pending, return_exceptions=True)
+                        )
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                    loop.close()
+
+            thread = threading.Thread(
+                target=loop_main,
+                name="casesystem-realtime-sync-loop",
+                daemon=True,
+            )
+            thread.start()
+            if not loop_ready.wait(timeout=2):
+                raise RuntimeError("Failed to start realtime sync loop thread")
+            loop = holder.get("loop")
+            if not isinstance(loop, asyncio.AbstractEventLoop):
+                raise RuntimeError("Realtime sync loop thread did not initialize")
+            self._sync_loop = loop
+            self._sync_loop_thread = thread
+            return loop
 
 
 _gateway: RealtimeGateway | None = None

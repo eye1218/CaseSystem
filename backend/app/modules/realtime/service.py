@@ -217,7 +217,11 @@ def _persist_notification(
     except Exception:
         logger.exception(
             "Failed to emit notification.created message",
-            extra={"notification_id": notification.id, "user_id": user_id},
+            extra={
+                "notification_id": notification.id,
+                "user_id": user_id,
+                "category": notification.category,
+            },
         )
 
     return notification, unread_count

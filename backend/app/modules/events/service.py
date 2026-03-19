@@ -11,8 +11,11 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from ...auth import ActorContext
 from ...enums import RoleCode, TicketMainStatus, TicketSubStatus
+from ...models import User, UserRole
 from ...security import utcnow
 from ...worker.celery_app import celery_app
+from ..config.service import get_config
+from ..realtime.service import deliver_notification
 from ..tasks.service import (
     list_bindable_task_templates,
     serialize_bound_task_templates,
@@ -47,6 +50,20 @@ SUPPORTED_RULE_STATUSES = {
     EventRuleStatus.DISABLED.value,
 }
 SUPPORTED_TIME_UNITS = {"minutes", "hours", "days"}
+TICKET_TIMEOUT_SIGNAL_KIND = "ticket_timeout_signal"
+TICKET_TIMEOUT_REMINDER_SIGNAL_KIND = "ticket_timeout_reminder_signal"
+TICKET_TIMEOUT_REMINDER_CATEGORY = "ticket.timeout_reminder"
+TICKET_TIMEOUT_REMINDER_KEY = "DEFAULT"
+DEFAULT_RESPONSE_REMINDER_MINUTES = 5
+DEFAULT_RESOLUTION_REMINDER_MINUTES = 30
+TICKET_TIMEOUT_REMINDER_RESPONSE_CATEGORY = "ticket_timeout_response_reminder"
+TICKET_TIMEOUT_REMINDER_RESOLUTION_CATEGORY = "ticket_timeout_resolution_reminder"
+REMINDER_KIND_RESPONSE = "response"
+REMINDER_KIND_RESOLUTION = "resolution"
+ACTIVE_TIMEOUT_REMINDER_STATUSES = {
+    TicketMainStatus.WAITING_RESPONSE.value,
+    TicketMainStatus.IN_PROGRESS.value,
+}
 
 
 class EventOperationError(Exception):
@@ -83,6 +100,21 @@ def _coerce_datetime(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def _parse_iso_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return _coerce_datetime(parsed) or parsed
+
+
 def _timedelta_for(amount: int, unit: str) -> timedelta:
     if unit == "minutes":
         return timedelta(minutes=amount)
@@ -91,6 +123,31 @@ def _timedelta_for(amount: int, unit: str) -> timedelta:
     if unit == "days":
         return timedelta(days=amount)
     raise EventOperationError(422, f"Unsupported time unit `{unit}`")
+
+
+def _normalize_reminder_minutes(value: object, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed <= 0:
+        return default
+    return parsed
+
+
+def resolve_ticket_timeout_reminder_minutes(db: Session) -> tuple[int, int]:
+    config = get_config(db, TICKET_TIMEOUT_REMINDER_CATEGORY, TICKET_TIMEOUT_REMINDER_KEY)
+    if config is None or not config.is_active or not isinstance(config.value, dict):
+        return DEFAULT_RESPONSE_REMINDER_MINUTES, DEFAULT_RESOLUTION_REMINDER_MINUTES
+
+    value = config.value
+    response_minutes = _normalize_reminder_minutes(
+        value.get("response_reminder_minutes"), DEFAULT_RESPONSE_REMINDER_MINUTES
+    )
+    resolution_minutes = _normalize_reminder_minutes(
+        value.get("resolution_reminder_minutes"), DEFAULT_RESOLUTION_REMINDER_MINUTES
+    )
+    return response_minutes, resolution_minutes
 
 
 def _validation_error(field_errors: dict[str, str]) -> EventOperationError:
@@ -1038,7 +1095,7 @@ def _create_ticket_timeout_signal(
             title=trigger_point,
             description=None,
             payload={
-                "kind": "ticket_timeout_signal",
+                "kind": TICKET_TIMEOUT_SIGNAL_KIND,
                 "ticket_id": ticket_id,
                 "related_object": _ticket_related_object(ticket_id),
                 "trigger_point": trigger_point,
@@ -1050,12 +1107,111 @@ def _create_ticket_timeout_signal(
     )
 
 
+def _create_ticket_timeout_reminder_signal(
+    db: Session,
+    *,
+    ticket_id: int,
+    reminder_kind: str,
+    deadline_at: datetime,
+    trigger_time: datetime,
+) -> None:
+    now = utcnow()
+    db.add(
+        Event(
+            event_type=EventQueueType.TIMED.value,
+            status=EventQueueStatus.PENDING.value,
+            trigger_time=trigger_time,
+            title=f"ticket.{reminder_kind}.reminder",
+            description=None,
+            payload={
+                "kind": TICKET_TIMEOUT_REMINDER_SIGNAL_KIND,
+                "ticket_id": ticket_id,
+                "related_object": _ticket_related_object(ticket_id),
+                "reminder_kind": reminder_kind,
+                "deadline_at": deadline_at.isoformat(),
+            },
+            created_by_user_id=None,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+
+def _cancel_pending_ticket_events_with_matcher(
+    db: Session,
+    *,
+    ticket_id: int,
+    matcher,
+) -> None:
+    now = utcnow()
+    for event in db.scalars(
+        select(Event).where(Event.status == EventQueueStatus.PENDING.value)
+    ).all():
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        if payload.get("ticket_id") != ticket_id:
+            continue
+        if not matcher(payload):
+            continue
+        event.status = EventQueueStatus.CANCELLED.value
+        event.cancelled_at = now
+        event.updated_at = now
+
+
+def _create_ticket_timeout_reminder_events(
+    db: Session,
+    *,
+    ticket_id: int,
+    response_deadline_at: datetime | None,
+    resolution_deadline_at: datetime | None,
+    response_reminder_minutes: int | None,
+    resolution_reminder_minutes: int | None,
+) -> None:
+    kinds_to_refresh: set[str] = set()
+    if response_deadline_at is not None and isinstance(response_reminder_minutes, int):
+        if response_reminder_minutes > 0:
+            kinds_to_refresh.add(REMINDER_KIND_RESPONSE)
+    if resolution_deadline_at is not None and isinstance(resolution_reminder_minutes, int):
+        if resolution_reminder_minutes > 0:
+            kinds_to_refresh.add(REMINDER_KIND_RESOLUTION)
+
+    if kinds_to_refresh:
+        cancel_pending_ticket_reminder_events(
+            db, ticket_id=ticket_id, kinds=sorted(kinds_to_refresh)
+        )
+
+    if response_deadline_at is not None and isinstance(response_reminder_minutes, int):
+        if response_reminder_minutes > 0:
+            normalized_deadline = _coerce_datetime(response_deadline_at) or response_deadline_at
+            _create_ticket_timeout_reminder_signal(
+                db,
+                ticket_id=ticket_id,
+                reminder_kind=REMINDER_KIND_RESPONSE,
+                deadline_at=normalized_deadline,
+                trigger_time=normalized_deadline
+                - timedelta(minutes=response_reminder_minutes),
+            )
+
+    if resolution_deadline_at is not None and isinstance(resolution_reminder_minutes, int):
+        if resolution_reminder_minutes > 0:
+            normalized_deadline = _coerce_datetime(resolution_deadline_at) or resolution_deadline_at
+            _create_ticket_timeout_reminder_signal(
+                db,
+                ticket_id=ticket_id,
+                reminder_kind=REMINDER_KIND_RESOLUTION,
+                deadline_at=normalized_deadline,
+                trigger_time=normalized_deadline
+                - timedelta(minutes=resolution_reminder_minutes),
+            )
+
+
 def create_ticket_timeout_events(
     db: Session,
     *,
     ticket_id: int,
     response_deadline_at: datetime | None,
     resolution_deadline_at: datetime | None,
+    response_reminder_minutes: int | None = None,
+    resolution_reminder_minutes: int | None = None,
 ) -> None:
     if response_deadline_at is not None:
         _create_ticket_timeout_signal(
@@ -1073,6 +1229,15 @@ def create_ticket_timeout_events(
             trigger_time=_coerce_datetime(resolution_deadline_at) or resolution_deadline_at,
         )
 
+    _create_ticket_timeout_reminder_events(
+        db,
+        ticket_id=ticket_id,
+        response_deadline_at=response_deadline_at,
+        resolution_deadline_at=resolution_deadline_at,
+        response_reminder_minutes=response_reminder_minutes,
+        resolution_reminder_minutes=resolution_reminder_minutes,
+    )
+
 
 def cancel_pending_ticket_events(
     db: Session, *, ticket_id: int, names: list[str]
@@ -1080,19 +1245,73 @@ def cancel_pending_ticket_events(
     if not names:
         return
 
-    now = utcnow()
-    for event in db.scalars(
-        select(Event).where(Event.status == EventQueueStatus.PENDING.value)
-    ).all():
-        if event.payload.get("kind") != "ticket_timeout_signal":
-            continue
-        if event.payload.get("ticket_id") != ticket_id:
-            continue
-        if event.payload.get("trigger_point") not in set(names):
-            continue
-        event.status = EventQueueStatus.CANCELLED.value
-        event.cancelled_at = now
-        event.updated_at = now
+    allowed_names = set(names)
+    _cancel_pending_ticket_events_with_matcher(
+        db,
+        ticket_id=ticket_id,
+        matcher=lambda payload: payload.get("kind") == TICKET_TIMEOUT_SIGNAL_KIND
+        and payload.get("trigger_point") in allowed_names,
+    )
+
+
+def cancel_pending_ticket_reminder_events(
+    db: Session, *, ticket_id: int, kinds: list[str] | None = None
+) -> None:
+    normalized_kinds = {value for value in (kinds or []) if value}
+    _cancel_pending_ticket_events_with_matcher(
+        db,
+        ticket_id=ticket_id,
+        matcher=lambda payload: payload.get("kind") == TICKET_TIMEOUT_REMINDER_SIGNAL_KIND
+        and (
+            not normalized_kinds
+            or payload.get("reminder_kind") in normalized_kinds
+        ),
+    )
+
+
+def rebuild_ticket_timeout_reminder_events(
+    db: Session,
+    *,
+    ticket_id: int,
+    response_deadline_at: datetime | None,
+    resolution_deadline_at: datetime | None,
+    response_reminder_minutes: int,
+    resolution_reminder_minutes: int,
+) -> None:
+    _create_ticket_timeout_reminder_events(
+        db,
+        ticket_id=ticket_id,
+        response_deadline_at=response_deadline_at,
+        resolution_deadline_at=resolution_deadline_at,
+        response_reminder_minutes=response_reminder_minutes,
+        resolution_reminder_minutes=resolution_reminder_minutes,
+    )
+
+
+def rebuild_timeout_reminder_events_for_active_tickets(
+    db: Session,
+    *,
+    response_reminder_minutes: int,
+    resolution_reminder_minutes: int,
+) -> int:
+    tickets = list(
+        db.scalars(
+            select(Ticket).where(
+                Ticket.is_deleted.is_(False),
+                Ticket.main_status.in_(tuple(ACTIVE_TIMEOUT_REMINDER_STATUSES)),
+            )
+        ).all()
+    )
+    for ticket in tickets:
+        rebuild_ticket_timeout_reminder_events(
+            db,
+            ticket_id=ticket.id,
+            response_deadline_at=ticket.response_deadline_at,
+            resolution_deadline_at=ticket.resolution_deadline_at,
+            response_reminder_minutes=response_reminder_minutes,
+            resolution_reminder_minutes=resolution_reminder_minutes,
+        )
+    return len(tickets)
 
 
 def dispatch_timeout_signal(
@@ -1132,3 +1351,139 @@ def dispatch_timeout_signal(
         dispatch_immediate=True,
     )
     return created
+
+
+def _reminder_ticket_deadline(ticket: Ticket, reminder_kind: str) -> datetime | None:
+    if reminder_kind == REMINDER_KIND_RESPONSE:
+        return ticket.response_deadline_at
+    if reminder_kind == REMINDER_KIND_RESOLUTION:
+        return ticket.resolution_deadline_at
+    return None
+
+
+def _should_dispatch_timeout_reminder(ticket: Ticket, reminder_kind: str) -> bool:
+    if reminder_kind == REMINDER_KIND_RESPONSE:
+        return (
+            ticket.main_status == TicketMainStatus.WAITING_RESPONSE.value
+            and ticket.responded_at is None
+            and ticket.resolved_at is None
+            and ticket.closed_at is None
+        )
+    if reminder_kind == REMINDER_KIND_RESOLUTION:
+        return (
+            ticket.main_status in ACTIVE_TIMEOUT_REMINDER_STATUSES
+            and ticket.resolved_at is None
+            and ticket.closed_at is None
+        )
+    return False
+
+
+def _pool_role_code(pool_code: str | None) -> str | None:
+    if not pool_code:
+        return None
+    if pool_code in {"T1_POOL", "T2_POOL", "T3_POOL"}:
+        return pool_code.removesuffix("_POOL")
+    return None
+
+
+def _list_active_user_ids_for_role(db: Session, *, role_code: str) -> list[str]:
+    return list(
+        db.scalars(
+            select(UserRole.user_id)
+            .join(User, User.id == UserRole.user_id)
+            .where(
+                UserRole.role_code == role_code,
+                UserRole.is_active.is_(True),
+                User.status == "active",
+            )
+            .distinct()
+        ).all()
+    )
+
+
+def _timeout_reminder_recipients(db: Session, *, ticket: Ticket) -> list[str]:
+    if ticket.assigned_to_user_id:
+        return [ticket.assigned_to_user_id]
+    role_code = _pool_role_code(ticket.current_pool_code)
+    if role_code is None:
+        return []
+    return _list_active_user_ids_for_role(db, role_code=role_code)
+
+
+def _timeout_reminder_category(reminder_kind: str) -> str | None:
+    if reminder_kind == REMINDER_KIND_RESPONSE:
+        return TICKET_TIMEOUT_REMINDER_RESPONSE_CATEGORY
+    if reminder_kind == REMINDER_KIND_RESOLUTION:
+        return TICKET_TIMEOUT_REMINDER_RESOLUTION_CATEGORY
+    return None
+
+
+def dispatch_timeout_reminder_signal(
+    db: Session,
+    *,
+    signal_event: Event,
+    occurred_at: datetime,
+) -> int:
+    payload = signal_event.payload if isinstance(signal_event.payload, dict) else {}
+    ticket_id = payload.get("ticket_id")
+    reminder_kind = payload.get("reminder_kind")
+    if not isinstance(ticket_id, int) or not isinstance(reminder_kind, str):
+        return 0
+
+    ticket = _load_ticket(db, ticket_id)
+    if ticket is None:
+        return 0
+
+    if not _should_dispatch_timeout_reminder(ticket, reminder_kind):
+        return 0
+
+    deadline_at = _reminder_ticket_deadline(ticket, reminder_kind)
+    normalized_deadline = _coerce_datetime(deadline_at) if deadline_at else None
+    if normalized_deadline is None:
+        return 0
+
+    payload_deadline = _parse_iso_datetime(payload.get("deadline_at"))
+    if payload_deadline is not None and payload_deadline != normalized_deadline:
+        return 0
+
+    normalized_occurred_at = _coerce_datetime(occurred_at) or occurred_at
+    remaining_seconds = int((normalized_deadline - normalized_occurred_at).total_seconds())
+    if remaining_seconds <= 0:
+        return 0
+
+    category = _timeout_reminder_category(reminder_kind)
+    if category is None:
+        return 0
+
+    recipients = _timeout_reminder_recipients(db, ticket=ticket)
+    delivered = 0
+    for user_id in recipients:
+        title = (
+            f"工单 #{ticket.id} 即将响应超时"
+            if reminder_kind == REMINDER_KIND_RESPONSE
+            else f"工单 #{ticket.id} 即将处置超时"
+        )
+        content = (
+            f"工单「{ticket.title}」将在 {max(1, (remaining_seconds + 59) // 60)} 分钟后达到"
+            f"{'响应' if reminder_kind == REMINDER_KIND_RESPONSE else '处置'}超时。"
+        )
+        deliver_notification(
+            db,
+            user_id=user_id,
+            category=category,
+            title=title,
+            content=content,
+            related_resource_type="ticket",
+            related_resource_id=ticket.id,
+            action_payload={
+                "ticket_id": ticket.id,
+                "ticket_title": ticket.title,
+                "reminder_kind": reminder_kind,
+                "deadline_at": normalized_deadline.isoformat(),
+                "remaining_seconds": remaining_seconds,
+                "pool_code": ticket.current_pool_code,
+            },
+            expire_at=normalized_deadline,
+        )
+        delivered += 1
+    return delivered

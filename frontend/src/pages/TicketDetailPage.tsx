@@ -311,6 +311,15 @@ function actionIcon(action: string) {
   }
 }
 
+function actionConfirmMessage(action: string, language: "zh" | "en") {
+  const confirmActions = new Set(["respond", "resolve", "close", "reopen", "move_to_pool", "escalate_pool"]);
+  if (!confirmActions.has(action)) {
+    return null;
+  }
+  const label = actionLabel(action, language);
+  return language === "zh" ? `确认执行「${label}」操作吗？` : `Confirm "${label}" action?`;
+}
+
 function markdownComponents() {
   return {
     h2: ({ children }: { children?: ReactNode }) => (
@@ -730,6 +739,10 @@ export default function TicketDetailPage() {
       await openOwnershipAction(action);
       return;
     }
+    const confirmMessage = actionConfirmMessage(action, language);
+    if (confirmMessage && !window.confirm(confirmMessage)) {
+      return;
+    }
 
     setSubmitting(action);
     setError("");
@@ -747,6 +760,10 @@ export default function TicketDetailPage() {
 
   const handleOwnershipSubmit = async () => {
     if (!id || !detail || !ownershipAction) return;
+    const confirmMessage = actionConfirmMessage(ownershipAction, language);
+    if (confirmMessage && !window.confirm(confirmMessage)) {
+      return;
+    }
 
     setSubmitting(ownershipAction);
     setOwnershipError("");
@@ -877,7 +894,7 @@ export default function TicketDetailPage() {
   const visibleContext = ticketContext?.content_markdown ?? detail.context_markdown;
 
   return (
-    <div className="flex h-full items-stretch p-6">
+    <div className="ticket-font-scope flex h-full items-stretch p-6">
       <div className="flex min-w-0 flex-1 gap-6">
         <div className="min-w-0 flex-1 space-y-6">
           <div className="space-y-4">

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ...auth import ActorContext
 from ...enums import RoleCode, UserStatus
 from ...models import User, UserRole
-from ...security import utcnow
+from ...security import coerce_utc_datetime, utcnow
 from ..tickets.models import Ticket
 
 INTERNAL_ROLE_CODES = {
@@ -149,11 +149,26 @@ def _safe_ratio(numerator: int | float, denominator: int | float) -> float | Non
 
 
 def _duration_seconds(start_at: datetime, end_at: datetime) -> float:
-    return max((end_at - start_at).total_seconds(), 0.0)
+    normalized_start = coerce_utc_datetime(start_at)
+    normalized_end = coerce_utc_datetime(end_at)
+    if normalized_start is None or normalized_end is None:
+        return 0.0
+    return max((normalized_end - normalized_start).total_seconds(), 0.0)
 
 
 def _within_window(value: datetime | None, window: WindowContext) -> bool:
-    return value is not None and window.window_start <= value <= window.window_end
+    normalized_value = coerce_utc_datetime(value)
+    return normalized_value is not None and window.window_start <= normalized_value <= window.window_end
+
+
+def _is_on_or_before(left: datetime | None, right: datetime | None) -> bool:
+    normalized_left = coerce_utc_datetime(left)
+    normalized_right = coerce_utc_datetime(right)
+    return (
+        normalized_left is not None
+        and normalized_right is not None
+        and normalized_left <= normalized_right
+    )
 
 
 def _completion_at(ticket: Ticket) -> datetime | None:
@@ -296,8 +311,8 @@ def _aggregate_metrics(
             sla_denom += 1
             weighted_sla_denom += ticket.risk_score
             is_attained = (
-                responded_at <= ticket.response_deadline_at
-                and completion_at <= ticket.resolution_deadline_at
+                _is_on_or_before(responded_at, ticket.response_deadline_at)
+                and _is_on_or_before(completion_at, ticket.resolution_deadline_at)
             )
             if is_attained:
                 sla_pass += 1
@@ -313,8 +328,8 @@ def _aggregate_metrics(
                 day_bucket.sla_denom += 1
                 day_bucket.weighted_denom += ticket.risk_score
                 if (
-                    responded_at <= ticket.response_deadline_at
-                    and completion_at <= ticket.resolution_deadline_at
+                    _is_on_or_before(responded_at, ticket.response_deadline_at)
+                    and _is_on_or_before(completion_at, ticket.resolution_deadline_at)
                 ):
                     day_bucket.sla_pass += 1
                     day_bucket.weighted_pass += ticket.risk_score

@@ -31,10 +31,12 @@ from ..alert_sources.service import (
 from ..config.service import SLA_POLICY_CATEGORY, get_config
 from ..events.service import (
     cancel_pending_ticket_events,
+    cancel_pending_ticket_reminder_events,
     clear_registered_immediate_dispatches,
     create_ticket_event,
     create_ticket_timeout_events,
     dispatch_registered_immediate_events,
+    resolve_ticket_timeout_reminder_minutes,
 )
 from ..knowledge.service import list_related_articles_for_ticket_detail
 from ..realtime.service import (
@@ -1122,11 +1124,16 @@ def create_ticket(
         visibility="PUBLIC",
     )
     create_ticket_event(db, ticket_id=ticket.id, name=TICKET_EVENT_CREATED)
+    response_reminder_minutes, resolution_reminder_minutes = (
+        resolve_ticket_timeout_reminder_minutes(db)
+    )
     create_ticket_timeout_events(
         db,
         ticket_id=ticket.id,
         response_deadline_at=ticket.response_deadline_at,
         resolution_deadline_at=ticket.resolution_deadline_at,
+        response_reminder_minutes=response_reminder_minutes,
+        resolution_reminder_minutes=resolution_reminder_minutes,
     )
     _commit_ticket_changes(db)
     _invalidate_ticket_cache(ticket.id)
@@ -1274,6 +1281,7 @@ def update_ticket_detail(
     _assert_ticket_version(ticket, expected_version)
 
     changed = False
+    deadline_changed = False
     changed_at = utcnow()
     if title is not None:
         ticket.title = title
@@ -1293,6 +1301,7 @@ def update_ticket_detail(
             ticket.response_deadline_at = ticket.created_at + response_window
             ticket.resolution_deadline_at = ticket.created_at + resolution_window
             changed = True
+            deadline_changed = True
     if risk_score is not None:
         ticket.risk_score = risk_score
         changed = True
@@ -1326,6 +1335,48 @@ def update_ticket_detail(
             action_type="updated",
             content="更新了工单基础信息。",
         )
+        if deadline_changed:
+            cancel_pending_ticket_events(
+                db,
+                ticket_id=ticket.id,
+                names=[
+                    TICKET_EVENT_RESPONSE_TIMEOUT,
+                    TICKET_EVENT_RESOLUTION_TIMEOUT,
+                ],
+            )
+            cancel_pending_ticket_reminder_events(
+                db,
+                ticket_id=ticket.id,
+                kinds=[
+                    "response",
+                    "resolution",
+                ],
+            )
+            response_reminder_minutes, resolution_reminder_minutes = (
+                resolve_ticket_timeout_reminder_minutes(db)
+            )
+            response_deadline_for_events = (
+                ticket.response_deadline_at
+                if ticket.main_status == TicketMainStatus.WAITING_RESPONSE.value
+                else None
+            )
+            resolution_deadline_for_events = (
+                ticket.resolution_deadline_at
+                if ticket.main_status
+                in {
+                    TicketMainStatus.WAITING_RESPONSE.value,
+                    TicketMainStatus.IN_PROGRESS.value,
+                }
+                else None
+            )
+            create_ticket_timeout_events(
+                db,
+                ticket_id=ticket.id,
+                response_deadline_at=response_deadline_for_events,
+                resolution_deadline_at=resolution_deadline_for_events,
+                response_reminder_minutes=response_reminder_minutes,
+                resolution_reminder_minutes=resolution_reminder_minutes,
+            )
         create_ticket_event(db, ticket_id=ticket.id, name=TICKET_EVENT_UPDATED)
         _commit_ticket_changes(db)
         _invalidate_ticket_cache(ticket.id)
@@ -1404,6 +1455,11 @@ def execute_ticket_action(
         cancel_pending_ticket_events(
             db, ticket_id=ticket.id, names=[TICKET_EVENT_RESPONSE_TIMEOUT]
         )
+        cancel_pending_ticket_reminder_events(
+            db,
+            ticket_id=ticket.id,
+            kinds=["response"],
+        )
     elif action == "resolve":
         _assert_internal_actor(actor)
         ticket.resolved_at = now
@@ -1422,6 +1478,11 @@ def execute_ticket_action(
         create_ticket_event(db, ticket_id=ticket.id, name=TICKET_EVENT_STATUS_CHANGED)
         cancel_pending_ticket_events(
             db, ticket_id=ticket.id, names=[TICKET_EVENT_RESOLUTION_TIMEOUT]
+        )
+        cancel_pending_ticket_reminder_events(
+            db,
+            ticket_id=ticket.id,
+            kinds=["resolution"],
         )
     elif action == "close":
         _assert_internal_actor(actor)
@@ -1444,9 +1505,15 @@ def execute_ticket_action(
             ticket_id=ticket.id,
             names=[TICKET_EVENT_RESPONSE_TIMEOUT, TICKET_EVENT_RESOLUTION_TIMEOUT],
         )
+        cancel_pending_ticket_reminder_events(
+            db,
+            ticket_id=ticket.id,
+            kinds=["response", "resolution"],
+        )
     elif action == "reopen":
         ticket.closed_at = None
-        ticket.main_status = TicketMainStatus.CLOSED.value
+        ticket.resolved_at = None
+        ticket.main_status = TicketMainStatus.WAITING_RESPONSE.value
         ticket.sub_status = TicketSubStatus.REOPENED.value
         ticket.updated_at = now
         _record_action(
@@ -1459,11 +1526,16 @@ def execute_ticket_action(
             to_status=ticket.main_status,
         )
         create_ticket_event(db, ticket_id=ticket.id, name=TICKET_EVENT_REOPENED)
+        response_reminder_minutes, resolution_reminder_minutes = (
+            resolve_ticket_timeout_reminder_minutes(db)
+        )
         create_ticket_timeout_events(
             db,
             ticket_id=ticket.id,
             response_deadline_at=ticket.response_deadline_at,
             resolution_deadline_at=ticket.resolution_deadline_at,
+            response_reminder_minutes=response_reminder_minutes,
+            resolution_reminder_minutes=resolution_reminder_minutes,
         )
     elif action == "claim":
         _assert_internal_actor(actor)

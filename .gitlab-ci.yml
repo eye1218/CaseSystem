@@ -55,7 +55,7 @@ deploy_test_dev:
         rm -f "${ENV_BACKUP}"
       fi
     - docker compose --env-file "${ENV_FILE}" up -d postgres redis
-    - docker compose --env-file "${ENV_FILE}" up -d --force-recreate api worker beat
+    - docker compose --env-file "${ENV_FILE}" up -d --force-recreate api_http worker beat
     - docker compose --env-file "${ENV_FILE}" ps
     - |
       for _ in $(seq 1 20); do
@@ -116,6 +116,10 @@ deploy_prod_tag:
         echo "HTTPS_PORT must be numeric" >&2
         exit 1
       fi
+      if [ -n "${APP_PORT}" ] && ! printf '%s' "${APP_PORT}" | grep -Eq '^[0-9]+$'; then
+        echo "APP_PORT must be numeric" >&2
+        exit 1
+      fi
       HTTPS_PORT="${HTTPS_PORT:-443}"
       PUBLIC_ORIGIN="https://${PUBLIC_HOST}"
       if [ "${HTTPS_PORT}" != "443" ]; then
@@ -153,6 +157,7 @@ deploy_prod_tag:
         --output "${ENV_FILE}" \
         --https-port "${HTTPS_PORT}" \
         --public-origin "${PUBLIC_ORIGIN}" \
+        --http-port "${APP_PORT}" \
         --strict
     - |
       set --
@@ -162,4 +167,4 @@ deploy_prod_tag:
         set -- --cert-dir deploy/nginx/certs --cn "${PUBLIC_HOST}" --dns "${PUBLIC_HOST}" --dns localhost --ip 127.0.0.1
       fi
       ./scripts/gen_self_signed_cert.sh "$@"
-    - REMOTE_DIR="${TARGET_DIR}" ENV_FILE="${ENV_FILE}" HTTPS_PORT="${HTTPS_PORT}" bash scripts/deploy_tls_remote.sh
+    - REMOTE_DIR="${TARGET_DIR}" ENV_FILE="${ENV_FILE}" HTTPS_PORT="${HTTPS_PORT}" HTTP_PORT="${APP_PORT}" bash scripts/deploy_tls_remote.sh

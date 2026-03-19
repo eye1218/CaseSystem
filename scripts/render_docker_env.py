@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import os
 import re
 import secrets
@@ -8,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
+from urllib.parse import urlparse
 
 
 ORDERED_KEYS = [
@@ -17,8 +19,8 @@ ORDERED_KEYS = [
     "POSTGRES_PASSWORD",
     "CASESYSTEM_DATABASE_URL",
     "CASESYSTEM_ENVIRONMENT",
-    "CASESYSTEM_COOKIE_SECURE",
-    "CASESYSTEM_ALLOWED_ORIGINS",
+    "CASESYSTEM_ALLOWED_ORIGINS_HTTPS",
+    "CASESYSTEM_ALLOWED_ORIGINS_HTTP",
     "CASESYSTEM_JWT_SECRET_KEY",
     "CASESYSTEM_REPORT_STORAGE_DIR",
     "CASESYSTEM_CELERY_EVENT_SWEEP_INTERVAL_SECONDS",
@@ -66,6 +68,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--https-port", required=True)
     parser.add_argument("--public-origin", required=True)
+    parser.add_argument("--http-port", default="8010")
     parser.add_argument(
         "--strict",
         action="store_true",
@@ -183,6 +186,37 @@ def validate_strict_inputs() -> None:
         )
 
 
+def normalize_origin(value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise SystemExit(f"Invalid origin: {value}")
+    default_port = 443 if parsed.scheme == "https" else 80
+    port = parsed.port
+    if port is None or port == default_port:
+        return f"{parsed.scheme}://{parsed.hostname}"
+    return f"{parsed.scheme}://{parsed.hostname}:{port}"
+
+
+def build_http_origin(public_origin: str, http_port: str) -> str:
+    parsed = urlparse(public_origin)
+    if not parsed.hostname:
+        raise SystemExit(f"Invalid public origin: {public_origin}")
+    if not re.fullmatch(r"[0-9]+", http_port):
+        raise SystemExit(f"Invalid HTTP port: {http_port}")
+    if http_port == "80":
+        return f"http://{parsed.hostname}"
+    return f"http://{parsed.hostname}:{http_port}"
+
+
+def build_origin_candidates(scheme: str, hostname: str, port: str) -> list[str]:
+    if not re.fullmatch(r"[0-9]+", port):
+        raise SystemExit(f"Invalid port: {port}")
+    default_port = "443" if scheme == "https" else "80"
+    if port == default_port:
+        return [f"{scheme}://{hostname}", f"{scheme}://{hostname}:{port}"]
+    return [f"{scheme}://{hostname}:{port}"]
+
+
 def write_env_file(path: Path, lines: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(path.name + ".tmp")
@@ -227,6 +261,8 @@ def main() -> None:
     template = load_env_file(args.template)
     existing = load_env_file(args.existing)
     state = load_env_file(args.state) if args.state is not None else {}
+
+    public_origin = normalize_origin(args.public_origin)
 
     postgres_user = choose_text("POSTGRES_USER", existing, template, DEFAULTS["POSTGRES_USER"])
     postgres_db = choose_text("POSTGRES_DB", existing, template, DEFAULTS["POSTGRES_DB"])
@@ -287,9 +323,28 @@ def main() -> None:
         f"{quote(postgres_password, safe='')}"
         f"@postgres:5432/{quote(postgres_db, safe='')}"
     )
-    allowed_origins = env_override("CASESYSTEM_ALLOWED_ORIGINS")
-    if not allowed_origins:
-        allowed_origins = f'["{args.public_origin}"]'
+    allowed_origins_https = (
+        env_override("CASESYSTEM_ALLOWED_ORIGINS_HTTPS")
+        or env_override("CASESYSTEM_ALLOWED_ORIGINS")
+    )
+    if not allowed_origins_https:
+        parsed_public = urlparse(public_origin)
+        if not parsed_public.hostname:
+            raise SystemExit(f"Invalid public origin: {public_origin}")
+        allowed_origins_https = json.dumps(
+            build_origin_candidates("https", parsed_public.hostname, args.https_port),
+            separators=(",", ":"),
+        )
+
+    allowed_origins_http = env_override("CASESYSTEM_ALLOWED_ORIGINS_HTTP")
+    if not allowed_origins_http:
+        parsed_http = urlparse(build_http_origin(public_origin, args.http_port))
+        if not parsed_http.hostname:
+            raise SystemExit(f"Invalid public origin: {public_origin}")
+        allowed_origins_http = json.dumps(
+            build_origin_candidates("http", parsed_http.hostname, args.http_port),
+            separators=(",", ":"),
+        )
 
     values = {
         "HTTPS_PORT": args.https_port,
@@ -298,8 +353,8 @@ def main() -> None:
         "POSTGRES_PASSWORD": postgres_password,
         "CASESYSTEM_DATABASE_URL": database_url,
         "CASESYSTEM_ENVIRONMENT": environment,
-        "CASESYSTEM_COOKIE_SECURE": "true",
-        "CASESYSTEM_ALLOWED_ORIGINS": allowed_origins,
+        "CASESYSTEM_ALLOWED_ORIGINS_HTTPS": allowed_origins_https,
+        "CASESYSTEM_ALLOWED_ORIGINS_HTTP": allowed_origins_http,
         "CASESYSTEM_JWT_SECRET_KEY": jwt_secret_key,
         "CASESYSTEM_REPORT_STORAGE_DIR": report_storage_dir,
         "CASESYSTEM_CELERY_EVENT_SWEEP_INTERVAL_SECONDS": celery_event_sweep_interval_seconds,

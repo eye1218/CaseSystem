@@ -25,8 +25,8 @@ TEMPLATE_CONTENT = dedent(
     POSTGRES_PASSWORD=change-me-db-password
 
     CASESYSTEM_ENVIRONMENT=docker
-    CASESYSTEM_COOKIE_SECURE=true
-    CASESYSTEM_ALLOWED_ORIGINS=["https://localhost","https://127.0.0.1"]
+    CASESYSTEM_ALLOWED_ORIGINS_HTTPS=["https://localhost","https://127.0.0.1"]
+    CASESYSTEM_ALLOWED_ORIGINS_HTTP=["http://localhost:8010","http://127.0.0.1:8010"]
     CASESYSTEM_JWT_SECRET_KEY=change-me-in-production-at-least-32-bytes
     CASESYSTEM_REPORT_STORAGE_DIR=/app/.runtime/report-storage
     CASESYSTEM_CELERY_EVENT_SWEEP_INTERVAL_SECONDS=30
@@ -138,8 +138,8 @@ def test_render_preserves_existing_values_and_generates_missing_secrets(tmp_path
     assert values["POSTGRES_DB"] == "existing_db"
     assert values["POSTGRES_USER"] == "existing_user"
     assert values["CASESYSTEM_ENVIRONMENT"] == "staging"
-    assert values["CASESYSTEM_COOKIE_SECURE"] == "true"
-    assert values["CASESYSTEM_ALLOWED_ORIGINS"] == '["https://deploy.example.com"]'
+    assert values["CASESYSTEM_ALLOWED_ORIGINS_HTTPS"] == '["https://deploy.example.com","https://deploy.example.com:443"]'
+    assert values["CASESYSTEM_ALLOWED_ORIGINS_HTTP"] == '["http://deploy.example.com:8010"]'
     assert values["CASESYSTEM_SMTP_PASSWORD"] == ""
     assert re.fullmatch(r"[0-9a-f]{32}", values["POSTGRES_PASSWORD"])
     assert re.fullmatch(r"[0-9a-f]{64}", values["CASESYSTEM_JWT_SECRET_KEY"])
@@ -294,7 +294,8 @@ def test_render_strict_uses_gitlab_variables_and_allowed_origin_override(tmp_pat
             "CASESYSTEM_SMTP_FROM_EMAIL": "from@example.com",
             "CASESYSTEM_SMTP_USE_SSL": "false",
             "CASESYSTEM_SMTP_STARTTLS": "true",
-            "CASESYSTEM_ALLOWED_ORIGINS": '["https://prod.example.com","https://admin.example.com"]',
+            "CASESYSTEM_ALLOWED_ORIGINS_HTTPS": '["https://prod.example.com","https://admin.example.com"]',
+            "CASESYSTEM_ALLOWED_ORIGINS_HTTP": '["http://prod.example.com:8010"]',
         },
         strict=True,
     )
@@ -304,4 +305,24 @@ def test_render_strict_uses_gitlab_variables_and_allowed_origin_override(tmp_pat
     assert values["POSTGRES_USER"] == "prod_user"
     assert values["POSTGRES_PASSWORD"] == "prod-db-password"
     assert values["CASESYSTEM_JWT_SECRET_KEY"] == "prod-jwt-secret-key-prod-jwt-secret-key-123456"
-    assert values["CASESYSTEM_ALLOWED_ORIGINS"] == '["https://prod.example.com","https://admin.example.com"]'
+    assert values["CASESYSTEM_ALLOWED_ORIGINS_HTTPS"] == '["https://prod.example.com","https://admin.example.com"]'
+    assert values["CASESYSTEM_ALLOWED_ORIGINS_HTTP"] == '["http://prod.example.com:8010"]'
+
+
+def test_render_uses_legacy_allowed_origins_as_https_fallback(tmp_path: Path) -> None:
+    content, _ = render_env(
+        tmp_path,
+        """
+        POSTGRES_DB=existing_db
+        POSTGRES_USER=existing_user
+        CASESYSTEM_SMTP_HOST=
+        CASESYSTEM_SMTP_USERNAME=
+        CASESYSTEM_SMTP_FROM_EMAIL=
+        """,
+        env_overrides={
+            "CASESYSTEM_ALLOWED_ORIGINS": '["https://legacy.example.com"]',
+        },
+    )
+    values = parse_env(content)
+    assert values["CASESYSTEM_ALLOWED_ORIGINS_HTTPS"] == '["https://legacy.example.com"]'
+    assert values["CASESYSTEM_ALLOWED_ORIGINS_HTTP"] == '["http://deploy.example.com:8010"]'

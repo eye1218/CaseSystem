@@ -15,6 +15,7 @@ REMOTE_USER="${REMOTE_USER:-root}"
 REMOTE_DIR="${REMOTE_DIR:-/root/workspace/CaseSystem}"
 PUBLIC_HOST="${PUBLIC_HOST:-}"
 HTTPS_PORT="${HTTPS_PORT:-443}"
+HTTP_PORT="${HTTP_PORT:-8010}"
 SSH_PORT="${SSH_PORT:-22}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
@@ -31,7 +32,16 @@ Defaults:
   REMOTE_DIR=/root/workspace/CaseSystem
   PUBLIC_HOST=<REMOTE_HOST>
   HTTPS_PORT=443
+  HTTP_PORT=8010
   SSH_PORT=22
+
+Optional arguments:
+  --remote-user <user>
+  --remote-dir <path>
+  --public-host <host-or-ip>
+  --https-port <port>
+  --http-port <port>
+  --ssh-port <port>
 
 Optional overrides:
   POSTGRES_PASSWORD
@@ -47,6 +57,8 @@ Environment passthrough:
   CASESYSTEM_CELERY_EVENT_SWEEP_INTERVAL_SECONDS
   CASESYSTEM_TICKET_CACHE_TTL_SECONDS
   CASESYSTEM_SQLITE_SOURCE_PATH
+  CASESYSTEM_ALLOWED_ORIGINS_HTTPS
+  CASESYSTEM_ALLOWED_ORIGINS_HTTP
   CASESYSTEM_SMTP_HOST
   CASESYSTEM_SMTP_PORT
   CASESYSTEM_SMTP_USERNAME
@@ -224,6 +236,10 @@ while [[ $# -gt 0 ]]; do
       HTTPS_PORT="${2:-}"
       shift 2
       ;;
+    --http-port)
+      HTTP_PORT="${2:-}"
+      shift 2
+      ;;
     --ssh-port)
       SSH_PORT="${2:-}"
       shift 2
@@ -260,6 +276,10 @@ fi
 
 if [[ ! "${HTTPS_PORT}" =~ ^[0-9]+$ ]] || (( HTTPS_PORT < 1 || HTTPS_PORT > 65535 )); then
   die "HTTPS_PORT must be a valid TCP port number: ${HTTPS_PORT}"
+fi
+
+if [[ ! "${HTTP_PORT}" =~ ^[0-9]+$ ]] || (( HTTP_PORT < 1 || HTTP_PORT > 65535 )); then
+  die "HTTP_PORT must be a valid TCP port number: ${HTTP_PORT}"
 fi
 
 if [[ ! "${SSH_PORT}" =~ ^[0-9]+$ ]] || (( SSH_PORT < 1 || SSH_PORT > 65535 )); then
@@ -301,6 +321,8 @@ for name in \
   CASESYSTEM_CELERY_EVENT_SWEEP_INTERVAL_SECONDS \
   CASESYSTEM_TICKET_CACHE_TTL_SECONDS \
   CASESYSTEM_SQLITE_SOURCE_PATH \
+  CASESYSTEM_ALLOWED_ORIGINS_HTTPS \
+  CASESYSTEM_ALLOWED_ORIGINS_HTTP \
   CASESYSTEM_SMTP_HOST \
   CASESYSTEM_SMTP_PORT \
   CASESYSTEM_SMTP_USERNAME \
@@ -348,7 +370,8 @@ log "Rendering deployment env file"
   --state "${STATE_FILE_PATH}" \
   --output "${ENV_FILE_PATH}" \
   --https-port "${HTTPS_PORT}" \
-  --public-origin "$(public_origin)"
+  --public-origin "$(public_origin)" \
+  --http-port "${HTTP_PORT}"
 log "Wrote deployment env file: ${ENV_FILE_PATH}"
 
 CERT_CN="${PUBLIC_HOST}"
@@ -434,13 +457,13 @@ log "Syncing generated certificates"
 rsync -az --delete -e "${RSYNC_SSH}" "${CERT_DIR}/" "${REMOTE_TARGET}:${REMOTE_DIR}/deploy/nginx/certs/"
 
 log "Running remote deployment"
-"${SSH_BASE[@]}" "${SSH_TARGET}" "cd $(shell_quote "${REMOTE_DIR}") && REMOTE_DIR=$(shell_quote "${REMOTE_DIR}") ENV_FILE=$(shell_quote "${ENV_FILE_NAME}") HTTPS_PORT=$(shell_quote "${HTTPS_PORT}") bash scripts/deploy_tls_remote.sh"
+"${SSH_BASE[@]}" "${SSH_TARGET}" "cd $(shell_quote "${REMOTE_DIR}") && REMOTE_DIR=$(shell_quote "${REMOTE_DIR}") ENV_FILE=$(shell_quote "${ENV_FILE_NAME}") HTTPS_PORT=$(shell_quote "${HTTPS_PORT}") HTTP_PORT=$(shell_quote "${HTTP_PORT}") bash scripts/deploy_tls_remote.sh"
 
 log "Docker TLS deployment finished"
 echo "External URL: $(public_origin)"
 echo "Env file: ${ENV_FILE_PATH}"
 echo "Certificate directory: ${CERT_DIR}"
-echo "Restarted services: api, worker, beat, nginx"
+echo "Restarted services: api_tls, api_http, worker, beat, nginx"
 if [[ -n "${ENV_BACKUP_PATH}" ]]; then
   echo "Env backup: ${ENV_BACKUP_PATH}"
 fi

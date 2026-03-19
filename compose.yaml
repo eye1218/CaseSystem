@@ -1,6 +1,5 @@
 x-app-environment: &app-environment
   CASESYSTEM_ENVIRONMENT: ${CASESYSTEM_ENVIRONMENT:-docker}
-  CASESYSTEM_COOKIE_SECURE: ${CASESYSTEM_COOKIE_SECURE:-true}
   CASESYSTEM_JWT_SECRET_KEY: ${CASESYSTEM_JWT_SECRET_KEY:-change-me-in-production-at-least-32-bytes}
   CASESYSTEM_REPORT_STORAGE_DIR: ${CASESYSTEM_REPORT_STORAGE_DIR:-/app/.runtime/report-storage}
   CASESYSTEM_DATABASE_URL: ${CASESYSTEM_DATABASE_URL:-}
@@ -20,7 +19,6 @@ x-app-environment: &app-environment
   CASESYSTEM_SMTP_USE_SSL: ${CASESYSTEM_SMTP_USE_SSL:-false}
   CASESYSTEM_SMTP_STARTTLS: ${CASESYSTEM_SMTP_STARTTLS:-false}
   CASESYSTEM_SQLITE_SOURCE_PATH: ${CASESYSTEM_SQLITE_SOURCE_PATH:-/workspace/casesystem.db}
-  CASESYSTEM_ALLOWED_ORIGINS: ${CASESYSTEM_ALLOWED_ORIGINS:-["https://localhost","https://127.0.0.1"]}
 
 x-app-service: &app-service
   build:
@@ -79,8 +77,34 @@ services:
       postgres:
         condition: service_healthy
 
-  api:
+  api_tls:
     <<: *app-service
+    environment:
+      <<: *app-environment
+      CASESYSTEM_COOKIE_SECURE: "true"
+      CASESYSTEM_ALLOWED_ORIGINS: ${CASESYSTEM_ALLOWED_ORIGINS_HTTPS:-["https://localhost","https://127.0.0.1"]}
+    restart: unless-stopped
+    command: ["/workspace/docker/api-entrypoint.sh"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "from urllib.request import urlopen; urlopen('http://127.0.0.1:8010/healthz', timeout=5).read()",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  api_http:
+    <<: *app-service
+    environment:
+      <<: *app-environment
+      CASESYSTEM_COOKIE_SECURE: "false"
+      CASESYSTEM_ALLOWED_ORIGINS: ${CASESYSTEM_ALLOWED_ORIGINS_HTTP:-["http://localhost:8010","http://127.0.0.1:8010"]}
+    ports:
+      - '8010:8010'
     restart: unless-stopped
     command: ["/workspace/docker/api-entrypoint.sh"]
     healthcheck:
@@ -99,7 +123,7 @@ services:
     image: nginx:1.27-alpine
     restart: unless-stopped
     depends_on:
-      api:
+      api_tls:
         condition: service_healthy
     ports:
       - "${HTTPS_PORT:-443}:443"

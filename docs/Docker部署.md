@@ -3,7 +3,8 @@
 当前推荐部署方式改为 `Docker Compose`，运行以下服务：
 
 - `nginx`：HTTPS 入口（443）+ 反向代理（TLS 终止）
-- `api`：FastAPI + 前端静态资源（仅容器内暴露 8010）
+- `api_tls`：仅供 Nginx 反代的 HTTPS 后端（容器内 8010）
+- `api_http`：HTTP 直连入口（宿主机暴露 8010）
 - `worker`：Celery worker
 - `beat`：Celery beat
 - `redis`：Celery broker/result backend + 工单查询缓存
@@ -21,7 +22,8 @@ cp .env.docker.example .env.docker
 
 - `POSTGRES_PASSWORD`
 - `CASESYSTEM_JWT_SECRET_KEY`
-- `CASESYSTEM_ALLOWED_ORIGINS`（必须包含实际 HTTPS 访问入口）
+- `CASESYSTEM_ALLOWED_ORIGINS_HTTPS`（默认是 `https://<PUBLIC_HOST>`）
+- `CASESYSTEM_ALLOWED_ORIGINS_HTTP`（默认是 `http://<PUBLIC_HOST>:8010`）
 - SMTP 相关配置
 
 3. 生成自签证书（首次）：
@@ -57,7 +59,7 @@ docker compose --env-file .env.docker --profile init run --rm bootstrap
 6. 启动业务服务：
 
 ```bash
-docker compose --env-file .env.docker up -d api worker beat nginx
+docker compose --env-file .env.docker up -d api_tls api_http worker beat nginx
 ```
 
 7. 验证 HTTPS 入口：
@@ -82,6 +84,7 @@ PUBLIC_HOST=casesystem.example.com \
 
 - `REMOTE_HOST` 必填
 - `PUBLIC_HOST` 不填时默认等于 `REMOTE_HOST`
+- `HTTP_PORT` 默认 `8010`（对应 `api_http` 直连入口）
 - `POSTGRES_PASSWORD` 和 `CASESYSTEM_JWT_SECRET_KEY` 未提供时会自动生成
 - `CASESYSTEM_SMTP_PASSWORD` 不会自动生成
 - 如果保留了示例里的 SMTP 配置，但没提供 `CASESYSTEM_SMTP_PASSWORD`，脚本会直接失败
@@ -109,7 +112,8 @@ docker compose --env-file .env.docker ps
 查看 API 日志：
 
 ```bash
-docker compose --env-file .env.docker logs -f api
+docker compose --env-file .env.docker logs -f api_tls
+docker compose --env-file .env.docker logs -f api_http
 ```
 
 查看 Nginx 日志：
@@ -151,6 +155,7 @@ docker compose --env-file .env.docker down -v
 ## 部署说明（HTTPS）
 
 - 对外入口为 `https://<host>:${HTTPS_PORT}`（默认 `443`）。
-- 前端、`/api`、`/auth`、`/socket.io` 全部由 Nginx 反代到 `api:8010`。
-- `CASESYSTEM_COOKIE_SECURE=true` 必须开启，确保认证 Cookie 以 Secure 下发。
+- HTTPS 入口下，前端、`/api`、`/auth`、`/socket.io` 全部由 Nginx 反代到 `api_tls:8010`。
+- HTTP 直连入口为 `http://<host>:8010`，由 `api_http` 提供同源访问。
+- 两个入口禁止跨域混调，页面应始终请求当前访问 origin。
 - 自签证书会触发浏览器不受信任提示，适用于内部测试/验收。

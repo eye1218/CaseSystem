@@ -4,6 +4,7 @@ set -euo pipefail
 REMOTE_DIR="${REMOTE_DIR:-}"
 ENV_FILE="${ENV_FILE:-.env.docker}"
 HTTPS_PORT="${HTTPS_PORT:-443}"
+HTTP_PORT="${HTTP_PORT:-8010}"
 
 die() {
   echo "Error: $*" >&2
@@ -101,6 +102,48 @@ if '"csrf_token"' not in csrf_body:
 PY
 }
 
+smoke_http() {
+  local python_bin=""
+  python_bin="$(command -v python3 || command -v python || true)"
+  [[ -n "${python_bin}" ]] || die "python3 or python is required on the remote host for smoke checks."
+
+  HTTP_PORT="${HTTP_PORT}" "${python_bin}" - <<'PY'
+import os
+import time
+import urllib.request
+
+port = int(os.environ["HTTP_PORT"])
+base_url = f"http://127.0.0.1:{port}"
+
+
+def fetch(path: str, label: str) -> str:
+    last_error = None
+    for _ in range(20):
+        try:
+            with urllib.request.urlopen(f"{base_url}{path}", timeout=10) as response:
+                body = response.read().decode("utf-8")
+                print(f"==> {label}: {response.status}")
+                return body
+        except Exception as exc:  # pragma: no cover - remote runtime guard
+            last_error = exc
+            time.sleep(1)
+    raise SystemExit(f"{label} failed: {last_error}")
+
+
+health_body = fetch("/healthz", "http healthz")
+if '"message":"ok"' not in health_body.replace(" ", ""):
+    raise SystemExit("HTTP health check returned an unexpected body")
+
+login_body = fetch("/login", "http login")
+if "<!doctype html>" not in login_body.lower():
+    raise SystemExit("HTTP login page validation failed")
+
+csrf_body = fetch("/auth/csrf", "http csrf")
+if '"csrf_token"' not in csrf_body:
+    raise SystemExit("HTTP CSRF endpoint validation failed")
+PY
+}
+
 main() {
   [[ -n "${REMOTE_DIR}" ]] || die "REMOTE_DIR is required"
 
@@ -123,9 +166,10 @@ main() {
   log "Running bootstrap"
   docker compose --env-file "${ENV_FILE}" --profile init run --rm bootstrap
 
-  log "Starting api, worker, and beat"
-  docker compose --env-file "${ENV_FILE}" up -d --no-deps --force-recreate api worker beat
-  wait_for_healthy api
+  log "Starting api_tls, api_http, worker, and beat"
+  docker compose --env-file "${ENV_FILE}" up -d --no-deps --force-recreate api_tls api_http worker beat
+  wait_for_healthy api_tls
+  wait_for_healthy api_http
 
   log "Starting nginx"
   docker compose --env-file "${ENV_FILE}" up -d --no-deps --force-recreate nginx
@@ -133,6 +177,9 @@ main() {
 
   log "Running HTTPS smoke checks"
   smoke_https
+
+  log "Running HTTP smoke checks"
+  smoke_http
 }
 
 main "$@"

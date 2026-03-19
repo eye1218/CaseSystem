@@ -42,16 +42,19 @@
 | `POSTGRES_DB` | PostgreSQL 数据库名 | Protected | 必填 |
 | `PUBLIC_HOST` | 生产对外访问域名或 IP | Protected | 必填 |
 | `HTTPS_PORT` | 生产 HTTPS 端口 | Protected | 建议固定为 `443` |
+| `APP_PORT` | HTTP 直连入口端口 | Protected | 建议固定为 `8010` |
 | `CASESYSTEM_SMTP_HOST` | SMTP 服务器地址 | Protected | 必填 |
 | `CASESYSTEM_SMTP_PORT` | SMTP 端口 | Protected | 必填 |
 | `CASESYSTEM_SMTP_USERNAME` | SMTP 用户名 | Protected | 必填 |
 | `CASESYSTEM_SMTP_FROM_EMAIL` | 发件人地址 | Protected | 必填 |
 | `CASESYSTEM_SMTP_USE_SSL` | SMTP SSL 开关 | Protected | 必填 |
 | `CASESYSTEM_SMTP_STARTTLS` | SMTP STARTTLS 开关 | Protected | 必填 |
+| `CASESYSTEM_ALLOWED_ORIGINS_HTTPS` | HTTPS 入口允许源（JSON 数组） | Protected | 选填（默认由 `PUBLIC_HOST` 生成） |
+| `CASESYSTEM_ALLOWED_ORIGINS_HTTP` | HTTP 8010 入口允许源（JSON 数组） | Protected | 选填（默认由 `PUBLIC_HOST` + `APP_PORT` 生成） |
 
 3. 生产变量说明
-- `CASESYSTEM_ALLOWED_ORIGINS` 通常不需要单独配置，CI 会优先根据 `PUBLIC_HOST` 和 `HTTPS_PORT` 生成
-- 如果确实需要多入口访问，可以手工定义 `CASESYSTEM_ALLOWED_ORIGINS`，CI 会优先使用该变量
+- `CASESYSTEM_ALLOWED_ORIGINS_HTTPS` 通常不需要单独配置，CI 会根据 `PUBLIC_HOST` 和 `HTTPS_PORT` 生成
+- `CASESYSTEM_ALLOWED_ORIGINS_HTTP` 通常不需要单独配置，CI 会根据 `PUBLIC_HOST` 和 `APP_PORT` 生成
 - `CASESYSTEM_DATABASE_URL` 不建议作为 GitLab 变量维护，CI 会由 `POSTGRES_USER`、`POSTGRES_PASSWORD`、`POSTGRES_DB` 自动组合生成
 
 4. 通知
@@ -64,7 +67,7 @@
 - 目录不存在 `.git` 时会自动 `git init` 并绑定 origin
 - 会保留现有 `ENV_FILE` 内容
 - 执行 `docker compose up -d postgres redis`
-- 执行 `docker compose up -d --force-recreate api worker beat`
+- 执行 `docker compose up -d --force-recreate api_http worker beat`
 - 健康检查仍然是 HTTP 入口
 
 2. `deploy_prod_tag`
@@ -75,8 +78,9 @@
 - 执行 `docker compose --env-file .env.docker build`
 - 执行 `docker compose --env-file .env.docker up -d postgres redis`
 - 执行 `docker compose --env-file .env.docker --profile init run --rm bootstrap`
-- 执行 `docker compose --env-file .env.docker up -d api worker beat nginx`
-- 健康检查改为 `https://127.0.0.1:${HTTPS_PORT}`，不再使用 `http://...:8010`
+- 执行 `docker compose --env-file .env.docker up -d api_tls api_http worker beat nginx`
+- 健康检查同时覆盖 `https://127.0.0.1:${HTTPS_PORT}` 与 `http://127.0.0.1:${APP_PORT}`
+- 运行约束：访问 `443` 的页面只调用 `443`，访问 `8010` 的页面只调用 `8010`（禁止跨域混调）
 
 ## 4. 变量变更规则
 
@@ -107,4 +111,4 @@
 1. 从 `main` 打一个受保护 tag，确认生产机自动部署成功。
 2. 从非 `main` 祖先提交打 tag，确认生产发布被阻断。
 3. 删除或修改一个必填 GitLab 变量，确认生产 job 在渲染 `.env.docker` 前直接失败。
-4. 确认生产机 `https://127.0.0.1:443/healthz`、`/login`、`/auth/csrf`、`/socket.io` 正常。
+4. 确认生产机 `https://127.0.0.1:443/healthz`、`http://127.0.0.1:8010/healthz`、`/login`、`/auth/csrf`、`/socket.io` 正常。

@@ -5,7 +5,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, status
 from sqlalchemy.orm import Session
 
-from ...auth import ActorContext, require_auth
+from ...auth import ActorContext
+from ...dependencies import require_auth
 from ...database import get_db
 from .schemas import (
     SystemConfigCreate,

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from ...auth import ActorContext
-from ...enums import RoleCode
+from ...enums import RoleCode, TicketMainStatus, TicketSubStatus
 from ...security import utcnow
 from ...worker.celery_app import celery_app
 from ..tasks.service import (
@@ -1109,6 +1109,20 @@ def dispatch_timeout_signal(
     ticket = _load_ticket(db, ticket_id)
     if ticket is None:
         return []
+
+    # Set sub_status based on timeout type
+    if trigger_point == "ticket.response.timeout":
+        if ticket.main_status == TicketMainStatus.WAITING_RESPONSE.value:
+            ticket.sub_status = TicketSubStatus.RESPONSE_TIMEOUT.value
+            ticket.updated_at = utcnow()
+            db.add(ticket)
+            db.flush()
+    elif trigger_point == "ticket.resolution.timeout":
+        if ticket.main_status == TicketMainStatus.IN_PROGRESS.value:
+            ticket.sub_status = TicketSubStatus.RESOLUTION_TIMEOUT.value
+            ticket.updated_at = utcnow()
+            db.add(ticket)
+            db.flush()
 
     created = queue_matching_ticket_rules(
         db,

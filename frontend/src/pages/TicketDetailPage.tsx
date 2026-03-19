@@ -44,6 +44,10 @@ import { ticketCategoryOptions } from "../constants/ticketCategories";
 import { useAuth } from "../contexts/AuthContext";
 import { useLanguage } from "../contexts/LanguageContext";
 import { useRealtime } from "../contexts/RealtimeContext";
+import {
+  fetchSlaPolicies,
+  getPriorityOptionsFromPolicies,
+} from "../features/sla/policies";
 import type { KnowledgeArticleDetail, KnowledgeArticleSummary } from "../types/knowledge";
 import type {
   InternalTicketUser,
@@ -503,6 +507,30 @@ export default function TicketDetailPage() {
     alarm_ids_text: "",
     context_markdown: ""
   });
+  const [priorityOptions, setPriorityOptions] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPriorityOptions = async () => {
+      try {
+        const policies = await fetchSlaPolicies();
+        if (cancelled) {
+          return;
+        }
+        setPriorityOptions(
+          getPriorityOptionsFromPolicies(policies, [detail?.ticket?.priority ?? "", form.priority])
+        );
+      } catch {
+        if (!cancelled) {
+          setPriorityOptions(getPriorityOptionsFromPolicies([], [detail?.ticket?.priority ?? "", form.priority]));
+        }
+      }
+    };
+    void loadPriorityOptions();
+    return () => {
+      cancelled = true;
+    };
+  }, [detail?.ticket?.priority, form.priority]);
 
   const loadDetail = async (ticketId: string) => {
     setLoading(true);
@@ -959,7 +987,7 @@ export default function TicketDetailPage() {
                       onChange={(event) => setForm((current) => ({ ...current, priority: event.target.value as TicketPriority }))}
                       className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900"
                     >
-                      {["P1", "P2", "P3", "P4"].map((option) => (
+                      {priorityOptions.map((option) => (
                         <option key={option} value={option}>
                           {option}
                         </option>

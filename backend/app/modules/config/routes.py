@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy.orm import Session
 
 from ...auth import ActorContext
@@ -52,10 +52,13 @@ def config_get(
     category: Annotated[str, Path(description="Config category")],
     key: Annotated[str, Path(description="Config key")],
 ) -> SystemConfigResponse:
-    config = get_config(db, category, key)
-    if not config:
-        raise ConfigOperationError(status_code=404, detail=f"Config not found")
-    return config
+    try:
+        config = get_config(db, category, key)
+        if not config:
+            raise ConfigOperationError(status_code=404, detail="Config not found")
+        return config
+    except ConfigOperationError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
 
 
 @config_router.post(
@@ -71,10 +74,12 @@ def config_create(
     payload: SystemConfigCreate,
 ) -> SystemConfigResponse:
     try:
+        if payload.category != category or payload.key != key:
+            raise ConfigOperationError(422, "Path category/key must match payload category/key")
         config = create_config(
             db,
-            category=payload.category,
-            key=payload.key,
+            category=category,
+            key=key,
             value=payload.value,
             description=payload.description,
         )
@@ -82,7 +87,7 @@ def config_create(
         return config
     except ConfigOperationError as e:
         db.rollback()
-        raise e
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
 
 
 @config_router.put("/{category}/{key}", response_model=SystemConfigResponse)
@@ -106,7 +111,31 @@ def config_update(
         return config
     except ConfigOperationError as e:
         db.rollback()
-        raise e
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
+
+
+@config_router.patch("/{category}/{key}", response_model=SystemConfigResponse)
+def config_update_patch(
+    actor: Annotated[ActorContext, Depends(require_auth)],
+    db: Annotated[Session, Depends(get_db)],
+    category: Annotated[str, Path(description="Config category")],
+    key: Annotated[str, Path(description="Config key")],
+    payload: SystemConfigUpdate,
+) -> SystemConfigResponse:
+    try:
+        config = update_config(
+            db,
+            category=category,
+            key=key,
+            value=payload.value,
+            description=payload.description,
+            is_active=payload.is_active,
+        )
+        db.commit()
+        return config
+    except ConfigOperationError as e:
+        db.rollback()
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
 
 
 @config_router.delete("/{category}/{key}", status_code=status.HTTP_204_NO_CONTENT)
@@ -121,4 +150,4 @@ def config_delete(
         db.commit()
     except ConfigOperationError as e:
         db.rollback()
-        raise e
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e

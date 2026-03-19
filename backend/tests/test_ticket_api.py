@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from app.modules.alert_sources.models import AlertSourceConfig
 from app.modules.tickets.cache import (
     InMemoryTicketCacheBackend,
@@ -470,3 +472,96 @@ def test_cached_detail_base_is_filtered_per_actor(client, db_session_factory):
     customer_payload = customer_detail.json()
     assert all(item["visibility"] == "PUBLIC" for item in customer_payload["activity_feed"])
     assert customer_payload["permission_scope"]["current_role"] == "CUSTOMER"
+
+
+def _parse_iso_datetime(value: str) -> datetime:
+    return datetime.fromisoformat(value)
+
+
+def test_ticket_create_uses_dynamic_sla_policy_deadlines(client):
+    login(client, "admin", "AdminPass123")
+    csrf = issue_csrf(client)
+
+    config_response = client.post(
+        "/api/v1/config/ticket.sla_policy/VIP",
+        json={
+            "category": "ticket.sla_policy",
+            "key": "VIP",
+            "value": {"response_minutes": 30, "resolution_minutes": 90},
+            "description": "VIP SLA",
+        },
+        headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+    )
+    assert config_response.status_code == 201, config_response.text
+
+    create_response = client.post(
+        "/api/v1/tickets",
+        json={
+            "title": "VIP 工单",
+            "description": "验证动态 SLA 时限计算。",
+            "category_id": "network",
+            "priority": "vip",
+            "risk_score": 70,
+        },
+        headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+    )
+    assert create_response.status_code == 200, create_response.text
+    payload = create_response.json()["ticket"]
+    assert payload["priority"] == "VIP"
+
+    created_at = _parse_iso_datetime(payload["created_at"])
+    response_deadline = _parse_iso_datetime(payload["response_deadline_at"])
+    resolution_deadline = _parse_iso_datetime(payload["resolution_deadline_at"])
+    assert response_deadline == created_at + timedelta(minutes=30)
+    assert resolution_deadline == created_at + timedelta(minutes=90)
+
+
+def test_ticket_priority_update_recalculates_deadline_from_created_at(client):
+    login(client, "admin", "AdminPass123")
+    ticket_response = client.get("/api/v1/tickets/100177/detail")
+    assert ticket_response.status_code == 200, ticket_response.text
+    detail = ticket_response.json()
+    ticket = detail["ticket"]
+    csrf = issue_csrf(client)
+
+    update_response = client.patch(
+        "/api/v1/tickets/100177",
+        json={
+            "version": ticket["version"],
+            "priority": "P4",
+        },
+        headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+    )
+    assert update_response.status_code == 200, update_response.text
+    updated_ticket = update_response.json()["ticket"]
+
+    created_at = _parse_iso_datetime(updated_ticket["created_at"])
+    response_deadline = _parse_iso_datetime(updated_ticket["response_deadline_at"])
+    resolution_deadline = _parse_iso_datetime(updated_ticket["resolution_deadline_at"])
+    assert response_deadline == created_at + timedelta(minutes=480)
+    assert resolution_deadline == created_at + timedelta(minutes=2880)
+
+
+def test_deleted_sla_priority_is_rejected_for_new_ticket(client):
+    login(client, "admin", "AdminPass123")
+    csrf = issue_csrf(client)
+
+    delete_response = client.delete(
+        "/api/v1/config/ticket.sla_policy/P4",
+        headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+    )
+    assert delete_response.status_code == 204, delete_response.text
+
+    create_response = client.post(
+        "/api/v1/tickets",
+        json={
+            "title": "已删除优先级",
+            "description": "应拒绝使用已删除 SLA 优先级。",
+            "category_id": "network",
+            "priority": "P4",
+            "risk_score": 55,
+        },
+        headers={"X-CSRF-Token": csrf, "Origin": "https://testserver"},
+    )
+    assert create_response.status_code == 422, create_response.text
+    assert create_response.json()["detail"] == "Unsupported ticket priority"

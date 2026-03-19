@@ -16,7 +16,6 @@ from ...enums import (
     TicketEscalationMode,
     TicketEscalationStatus,
     TicketMainStatus,
-    TicketPriority,
     TicketSubStatus,
 )
 from ...models import User, UserRole
@@ -29,6 +28,7 @@ from ..alert_sources.service import (
     _query_alert_rows,
     get_preferred_enabled_alert_source,
 )
+from ..config.service import SLA_POLICY_CATEGORY, get_config
 from ..events.service import (
     cancel_pending_ticket_events,
     clear_registered_immediate_dispatches,
@@ -374,17 +374,24 @@ def _public_ticket_source(source: str) -> str:
     return source if source in PUBLIC_TICKET_SOURCES else "API"
 
 
-def _sla_windows(priority: str) -> tuple[timedelta, timedelta]:
-    window_map = {
-        TicketPriority.P1.value: (timedelta(hours=1), timedelta(hours=4)),
-        TicketPriority.P2.value: (timedelta(hours=2), timedelta(hours=8)),
-        TicketPriority.P3.value: (timedelta(hours=4), timedelta(hours=24)),
-        TicketPriority.P4.value: (timedelta(hours=8), timedelta(hours=48)),
-    }
+def _normalize_priority_code(priority: str) -> str:
+    return priority.strip().upper()
+
+
+def _sla_windows(db: Session, priority: str) -> tuple[timedelta, timedelta]:
+    normalized_priority = _normalize_priority_code(priority)
+    policy = get_config(db, SLA_POLICY_CATEGORY, normalized_priority)
+    if policy is None or not policy.is_active:
+        raise TicketOperationError(422, "Unsupported ticket priority")
+    value = policy.value if isinstance(policy.value, dict) else {}
     try:
-        return window_map[priority]
-    except KeyError as exc:
+        response_minutes = int(value.get("response_minutes"))
+        resolution_minutes = int(value.get("resolution_minutes"))
+    except (TypeError, ValueError) as exc:
         raise TicketOperationError(422, "Unsupported ticket priority") from exc
+    if response_minutes <= 0 or resolution_minutes <= 0 or resolution_minutes < response_minutes:
+        raise TicketOperationError(422, "Unsupported ticket priority")
+    return timedelta(minutes=response_minutes), timedelta(minutes=resolution_minutes)
 
 
 def _resolve_assignment(
@@ -1058,7 +1065,8 @@ def create_ticket(
 
     normalized_alarm_ids = _normalize_alarm_ids(alarm_ids)
     normalized_context_markdown = _normalize_context_markdown(context_markdown)
-    response_window, resolution_window = _sla_windows(priority)
+    normalized_priority = _normalize_priority_code(priority)
+    response_window, resolution_window = _sla_windows(db, normalized_priority)
     assigned_to, current_pool_code, responsibility_level = _resolve_assignment(
         actor, assignment_mode, pool_code
     )
@@ -1071,7 +1079,7 @@ def create_ticket(
         category_id=category_id,
         category_name=CATEGORY_NAMES[category_id],
         source=source,
-        priority=priority,
+        priority=normalized_priority,
         risk_score=risk_score,
         main_status=TicketMainStatus.WAITING_RESPONSE.value,
         sub_status=TicketSubStatus.NONE.value,
@@ -1278,8 +1286,13 @@ def update_ticket_detail(
         ticket.category_name = CATEGORY_NAMES.get(category_id, category_id)
         changed = True
     if priority is not None:
-        ticket.priority = priority
-        changed = True
+        normalized_priority = _normalize_priority_code(priority)
+        if ticket.priority != normalized_priority:
+            response_window, resolution_window = _sla_windows(db, normalized_priority)
+            ticket.priority = normalized_priority
+            ticket.response_deadline_at = ticket.created_at + response_window
+            ticket.resolution_deadline_at = ticket.created_at + resolution_window
+            changed = True
     if risk_score is not None:
         ticket.risk_score = risk_score
         changed = True

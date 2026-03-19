@@ -4,6 +4,7 @@ import { useAuth } from "../contexts/AuthContext";
 import ActionRequiredNotificationStack from "./ActionRequiredNotificationStack";
 import AppHeader from "./AppHeader";
 import AppSidebar from "./AppSidebar";
+import TicketTimeoutReminderStack from "./TicketTimeoutReminderStack";
 
 export default function MainLayout() {
   const { authReady, isAuthenticated } = useAuth();
@@ -30,6 +31,7 @@ export default function MainLayout() {
           <Outlet />
         </main>
         <ActionRequiredNotificationStack />
+        <TicketTimeoutReminderStack />
       </div>
     </div>
   );

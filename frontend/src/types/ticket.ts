@@ -16,7 +16,7 @@ export type TicketSubStatus =
   | "ESCALATION_REJECTED"
   | "REOPENED";
 
-export type TicketPriority = "P1" | "P2" | "P3" | "P4";
+export type TicketPriority = string;
 export type TicketClaimStatus = "claimed" | "unclaimed";
 
 export interface TicketSummary {

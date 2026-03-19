@@ -24,6 +24,8 @@ casesystem.db
 # Local runtime / env
 .runtime/
 .env.docker
+deploy/nginx/certs/*
+!deploy/nginx/certs/.gitkeep
 
 # OS
 .DS_Store

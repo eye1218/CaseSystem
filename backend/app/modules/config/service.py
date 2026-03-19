@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-from typing import Optional
+import re
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ...auth import ActorContext
 from ...security import utcnow
-from ..tickets.models import Ticket
 from .models import SystemConfig
-from .schemas import SystemConfigCreate, SystemConfigUpdate
 
 
 class ConfigOperationError(Exception):
@@ -20,6 +18,75 @@ class ConfigOperationError(Exception):
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
+
+
+SLA_POLICY_CATEGORY = "ticket.sla_policy"
+SLA_PRIORITY_CODE_RE = re.compile(r"^[A-Z0-9_-]{1,8}$")
+TICKET_TIMEOUT_REMINDER_CATEGORY = "ticket.timeout_reminder"
+TICKET_TIMEOUT_REMINDER_KEY = "DEFAULT"
+
+
+def _normalize_config_key(key: str) -> str:
+    return key.strip().upper()
+
+
+def _coerce_positive_int(field_name: str, value: Any) -> int:
+    if isinstance(value, bool):
+        raise ConfigOperationError(422, f"{field_name} must be a positive integer")
+    if isinstance(value, float):
+        if not value.is_integer():
+            raise ConfigOperationError(422, f"{field_name} must be a positive integer")
+        parsed = int(value)
+    else:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ConfigOperationError(422, f"{field_name} must be a positive integer") from exc
+    if parsed <= 0:
+        raise ConfigOperationError(422, f"{field_name} must be a positive integer")
+    return parsed
+
+
+def _validate_sla_policy_payload(*, key: str, value: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    normalized_key = _normalize_config_key(key)
+    if not SLA_PRIORITY_CODE_RE.fullmatch(normalized_key):
+        raise ConfigOperationError(
+            422,
+            "SLA priority code must be 1-8 chars: uppercase letters, numbers, _ and -",
+        )
+    if not isinstance(value, dict):
+        raise ConfigOperationError(422, "SLA policy value must be an object")
+    response_minutes = _coerce_positive_int("response_minutes", value.get("response_minutes"))
+    resolution_minutes = _coerce_positive_int("resolution_minutes", value.get("resolution_minutes"))
+    if resolution_minutes < response_minutes:
+        raise ConfigOperationError(422, "resolution_minutes cannot be less than response_minutes")
+    normalized_value = {
+        "response_minutes": response_minutes,
+        "resolution_minutes": resolution_minutes,
+    }
+    return normalized_key, normalized_value
+
+
+def _validate_timeout_reminder_payload(*, key: str, value: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    normalized_key = _normalize_config_key(key)
+    if normalized_key != TICKET_TIMEOUT_REMINDER_KEY:
+        raise ConfigOperationError(
+            422,
+            f"{TICKET_TIMEOUT_REMINDER_CATEGORY} only supports key `{TICKET_TIMEOUT_REMINDER_KEY}`",
+        )
+    if not isinstance(value, dict):
+        raise ConfigOperationError(422, "Timeout reminder value must be an object")
+
+    response_reminder_minutes = _coerce_positive_int(
+        "response_reminder_minutes", value.get("response_reminder_minutes")
+    )
+    resolution_reminder_minutes = _coerce_positive_int(
+        "resolution_reminder_minutes", value.get("resolution_reminder_minutes")
+    )
+    return normalized_key, {
+        "response_reminder_minutes": response_reminder_minutes,
+        "resolution_reminder_minutes": resolution_reminder_minutes,
+    }
 
 
 def get_configs_by_category(db: Session, category: str) -> list[SystemConfig]:
@@ -48,6 +115,10 @@ def create_config(
     value: dict,
     description: str | None = None,
 ) -> SystemConfig:
+    if category == SLA_POLICY_CATEGORY:
+        key, value = _validate_sla_policy_payload(key=key, value=value)
+    elif category == TICKET_TIMEOUT_REMINDER_CATEGORY:
+        key, value = _validate_timeout_reminder_payload(key=key, value=value)
     existing = get_config(db, category, key)
     if existing:
         raise ConfigOperationError(409, f"Config with category='{category}' and key='{key}' already exists")
@@ -77,6 +148,10 @@ def update_config(
         raise ConfigOperationError(404, f"Config with category='{category}' and key='{key}' not found")
 
     if value is not None:
+        if category == SLA_POLICY_CATEGORY:
+            _, value = _validate_sla_policy_payload(key=key, value=value)
+        elif category == TICKET_TIMEOUT_REMINDER_CATEGORY:
+            _, value = _validate_timeout_reminder_payload(key=key, value=value)
         config.value = value
     if description is not None:
         config.description = description
@@ -142,3 +217,32 @@ def seed_default_configs(db: Session) -> None:
                 value=pri["value"],
                 description=f"工单优先级: {pri['value']['zh']}",
             )
+
+    default_sla_policies = [
+        {"key": "P1", "value": {"response_minutes": 60, "resolution_minutes": 240}},
+        {"key": "P2", "value": {"response_minutes": 120, "resolution_minutes": 480}},
+        {"key": "P3", "value": {"response_minutes": 240, "resolution_minutes": 1440}},
+        {"key": "P4", "value": {"response_minutes": 480, "resolution_minutes": 2880}},
+    ]
+
+    for policy in default_sla_policies:
+        if not get_config(db, SLA_POLICY_CATEGORY, policy["key"]):
+            create_config(
+                db,
+                category=SLA_POLICY_CATEGORY,
+                key=policy["key"],
+                value=policy["value"],
+                description=f"SLA policy for {policy['key']}",
+            )
+
+    if not get_config(db, TICKET_TIMEOUT_REMINDER_CATEGORY, TICKET_TIMEOUT_REMINDER_KEY):
+        create_config(
+            db,
+            category=TICKET_TIMEOUT_REMINDER_CATEGORY,
+            key=TICKET_TIMEOUT_REMINDER_KEY,
+            value={
+                "response_reminder_minutes": 5,
+                "resolution_reminder_minutes": 30,
+            },
+            description="工单超时前提醒时间（分钟）",
+        )

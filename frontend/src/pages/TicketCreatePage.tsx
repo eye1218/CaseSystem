@@ -1,11 +1,17 @@
 import { ArrowLeft, CircleUserRound, ClipboardList, Inbox, ShieldAlert, TicketPlus } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
+import { listConfigs } from "../api/config";
 import { createTicket } from "../api/tickets";
 import { useAuth } from "../contexts/AuthContext";
 import { useLanguage } from "../contexts/LanguageContext";
+import {
+  fetchSlaPolicies,
+  getPriorityOptionsFromPolicies,
+  pickDefaultPriority,
+} from "../features/sla/policies";
 import type { TicketPriority } from "../types/ticket";
 
 interface FormState {
@@ -26,12 +32,18 @@ function parseAlarmIds(value: string): string[] {
     .filter((item) => item.length > 0);
 }
 
-const categories = [
+interface CategoryOption {
+  value: string;
+  zh: string;
+  en: string;
+}
+
+const DEFAULT_CATEGORIES: CategoryOption[] = [
   { value: "intrusion", zh: "入侵检测", en: "Intrusion Detection" },
   { value: "network", zh: "网络攻击", en: "Network Attack" },
   { value: "data", zh: "数据安全", en: "Data Security" },
   { value: "endpoint", zh: "终端安全", en: "Endpoint Security" },
-  { value: "phishing", zh: "网络钓鱼", en: "Phishing" }
+  { value: "phishing", zh: "网络钓鱼", en: "Phishing" },
 ];
 
 const poolOptions = ["T1_POOL", "T2_POOL", "T3_POOL"];
@@ -40,6 +52,8 @@ export default function TicketCreatePage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { language, t } = useLanguage();
+  const [categoryOptions, setCategoryOptions] = useState<CategoryOption[]>(DEFAULT_CATEGORIES);
+  const [priorityOptions, setPriorityOptions] = useState<string[]>([]);
   const [form, setForm] = useState<FormState>({
     title: "",
     description: "",
@@ -52,9 +66,74 @@ export default function TicketCreatePage() {
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [priorityLoading, setPriorityLoading] = useState(true);
 
   const isCustomer = user?.active_role === "CUSTOMER";
   const sourceValue = isCustomer ? "CUSTOMER" : "INTERNAL";
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadFormOptions = async () => {
+      setPriorityLoading(true);
+      try {
+        const [policies, categoryConfig] = await Promise.all([
+          fetchSlaPolicies(),
+          listConfigs("ticket.category"),
+        ]);
+        const options = getPriorityOptionsFromPolicies(policies);
+        const fallbackOptions = options.length > 0 ? options : ["P2"];
+        const defaultPriority = pickDefaultPriority(policies);
+        const fetchedCategories = categoryConfig.items
+          .map((item) => {
+            const value = String(item.key ?? "").trim();
+            if (!value) {
+              return null;
+            }
+            const raw = item.value as Record<string, unknown>;
+            return {
+              value,
+              zh: typeof raw.zh === "string" && raw.zh.trim() ? raw.zh.trim() : value,
+              en: typeof raw.en === "string" && raw.en.trim() ? raw.en.trim() : value,
+            } satisfies CategoryOption;
+          })
+          .filter((item): item is CategoryOption => item !== null);
+        const resolvedCategories = fetchedCategories.length > 0 ? fetchedCategories : DEFAULT_CATEGORIES;
+        if (cancelled) {
+          return;
+        }
+        setPriorityOptions(fallbackOptions);
+        setCategoryOptions(resolvedCategories);
+        setForm((current) => ({
+          ...current,
+          category_id: resolvedCategories.some((item) => item.value === current.category_id)
+            ? current.category_id
+            : resolvedCategories[0].value,
+          priority: fallbackOptions.includes(current.priority) ? current.priority : (defaultPriority as TicketPriority),
+        }));
+      } catch {
+        if (cancelled) {
+          return;
+        }
+        setCategoryOptions(DEFAULT_CATEGORIES);
+        setPriorityOptions(["P2"]);
+        setForm((current) => ({
+          ...current,
+          category_id: DEFAULT_CATEGORIES.some((item) => item.value === current.category_id)
+            ? current.category_id
+            : DEFAULT_CATEGORIES[0].value,
+          priority: "P2",
+        }));
+      } finally {
+        if (!cancelled) {
+          setPriorityLoading(false);
+        }
+      }
+    };
+    void loadFormOptions();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -167,7 +246,7 @@ export default function TicketCreatePage() {
                 onChange={(event) => setForm((current) => ({ ...current, category_id: event.target.value }))}
                 className="ticket-input"
               >
-                {categories.map((category) => (
+                {categoryOptions.map((category) => (
                   <option key={category.value} value={category.value}>
                     {category[language]}
                   </option>
@@ -179,9 +258,10 @@ export default function TicketCreatePage() {
               <select
                 value={form.priority}
                 onChange={(event) => setForm((current) => ({ ...current, priority: event.target.value as TicketPriority }))}
+                disabled={priorityLoading}
                 className="ticket-input"
               >
-                {["P1", "P2", "P3", "P4"].map((priority) => (
+                {priorityOptions.map((priority) => (
                   <option key={priority} value={priority}>
                     {priority}
                   </option>

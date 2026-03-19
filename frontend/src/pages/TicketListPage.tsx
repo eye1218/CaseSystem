@@ -11,6 +11,10 @@ import { useAuth } from "../contexts/AuthContext";
 import { useLanguage } from "../contexts/LanguageContext";
 import { useRealtime } from "../contexts/RealtimeContext";
 import {
+  fetchSlaPolicies,
+  getPriorityOptionsFromPolicies,
+} from "../features/sla/policies";
+import {
   getTicketDeadlinePresentation,
   useTicketDeadlineClock,
 } from "../features/tickets/deadlines";
@@ -28,7 +32,6 @@ const categories = [
   { id: "phishing", zh: "网络钓鱼", en: "Phishing" }
 ];
 
-const priorityOptions = ["P1", "P2", "P3", "P4"];
 const mainStatusOptions = [
   "WAITING_RESPONSE",
   "IN_PROGRESS",
@@ -124,11 +127,23 @@ function ticketMatchesFilters(
 }
 
 function sortTickets(items: TicketSummary[], field: SortField, direction: SortDirection) {
-  const priorityRank: Record<TicketSummary["priority"], number> = {
+  const priorityRank: Record<string, number> = {
     P1: 1,
     P2: 2,
     P3: 3,
     P4: 4
+  };
+
+  const priorityWeight = (priority: string): number => {
+    const normalized = priority.trim().toUpperCase();
+    if (priorityRank[normalized]) {
+      return priorityRank[normalized];
+    }
+    const pMatch = /^P(\d{1,3})$/.exec(normalized);
+    if (pMatch) {
+      return Number.parseInt(pMatch[1], 10);
+    }
+    return 999;
   };
 
   const multiplier = direction === "asc" ? 1 : -1;
@@ -139,7 +154,10 @@ function sortTickets(items: TicketSummary[], field: SortField, direction: SortDi
         comparison = left.id - right.id;
         break;
       case "priority":
-        comparison = priorityRank[left.priority] - priorityRank[right.priority];
+        comparison = priorityWeight(left.priority) - priorityWeight(right.priority);
+        if (comparison === 0) {
+          comparison = left.priority.localeCompare(right.priority);
+        }
         break;
       case "risk_score":
         comparison = left.risk_score - right.risk_score;
@@ -290,6 +308,30 @@ export default function TicketListPage({ assignedToMeOnly = false }: TicketListP
   const requestSeqRef = useRef(0);
   const loadMoreLockedRef = useRef(false);
   const deadlineNowMs = useTicketDeadlineClock(lastTicketEvent?.message_id ?? null);
+  const [priorityOptions, setPriorityOptions] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPriorityOptions = async () => {
+      try {
+        const policies = await fetchSlaPolicies();
+        if (cancelled) {
+          return;
+        }
+        setPriorityOptions(
+          getPriorityOptionsFromPolicies(policies, items.map((item) => item.priority))
+        );
+      } catch {
+        if (!cancelled) {
+          setPriorityOptions(items.map((item) => item.priority));
+        }
+      }
+    };
+    void loadPriorityOptions();
+    return () => {
+      cancelled = true;
+    };
+  }, [items]);
 
   const forceAssignedToMe = assignedToMeOnly;
 

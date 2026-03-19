@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.enums import RoleCode
 from app.models import ApiToken, Role, User, UserRole
+from app.modules.config.service import seed_default_configs
 from app.modules.knowledge.service import seed_knowledge
 from app.security import generate_refresh_token, hash_opaque_token, hash_password
 from app.ticketing import seed_tickets
@@ -59,6 +60,8 @@ def seed_roles(db: Session) -> None:
         if code in existing_codes:
             continue
         db.add(Role(code=code, **payload))
+    db.commit()
+    seed_default_configs(db)
     db.commit()
     seed_demo_users(db)
     seed_api_tokens(db)

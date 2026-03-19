@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_TEMPLATE="${ROOT_DIR}/.env.docker.example"
 ENV_FILE_NAME=".env.docker"
 ENV_FILE_PATH="${ROOT_DIR}/${ENV_FILE_NAME}"
+STATE_FILE_NAME=".runtime/deploy-secrets.env"
+STATE_FILE_PATH="${ROOT_DIR}/${STATE_FILE_NAME}"
 CERT_DIR="${ROOT_DIR}/deploy/nginx/certs"
 NGINX_CONF_PATH="${ROOT_DIR}/deploy/nginx/nginx.conf"
 BACKUP_ROOT="${ROOT_DIR}/.runtime/deploy-backups"
@@ -37,6 +39,7 @@ Optional overrides:
   CASESYSTEM_SMTP_PASSWORD
 
 Environment passthrough:
+  COMPOSE_PROJECT_NAME
   POSTGRES_USER
   POSTGRES_DB
   CASESYSTEM_ENVIRONMENT
@@ -109,6 +112,87 @@ sync_path_to_remote() {
   local destination="$2"
   local rsync_target="${REMOTE_TARGET}:${destination}"
   rsync -az -e "${RSYNC_SSH}" "${source}" "${rsync_target}"
+}
+
+sync_remote_file_to_local_if_exists() {
+  local remote_path="$1"
+  local local_path="$2"
+
+  if "${SSH_BASE[@]}" "${SSH_TARGET}" "test -f $(shell_quote "${remote_path}")"; then
+    mkdir -p "$(dirname "${local_path}")"
+    rsync -az -e "${RSYNC_SSH}" "${REMOTE_TARGET}:${remote_path}" "${local_path}"
+    return 0
+  fi
+
+  return 1
+}
+
+remote_volume_exists() {
+  local volume_name="$1"
+  "${SSH_BASE[@]}" "${SSH_TARGET}" "docker volume inspect $(shell_quote "${volume_name}") >/dev/null 2>&1"
+}
+
+read_env_value() {
+  local file="$1"
+  local key="$2"
+
+  "${PYTHON_BIN}" - "${file}" "${key}" <<'PY'
+import sys
+from pathlib import Path
+
+
+def parse_env_value(raw: str) -> str:
+    raw = raw.strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] == '"':
+        body = raw[1:-1]
+        result = []
+        i = 0
+        while i < len(body):
+            ch = body[i]
+            if ch == "\\" and i + 1 < len(body):
+                nxt = body[i + 1]
+                if nxt == "n":
+                    result.append("\n")
+                    i += 2
+                    continue
+                if nxt == "r":
+                    result.append("\r")
+                    i += 2
+                    continue
+                if nxt == '"':
+                    result.append('"')
+                    i += 2
+                    continue
+                if nxt == "\\":
+                    result.append("\\")
+                    i += 2
+                    continue
+            result.append(ch)
+            i += 1
+        return "".join(result)
+    if len(raw) >= 2 and raw[0] == raw[-1] == "'":
+        return raw[1:-1]
+    return raw
+
+
+path = Path(sys.argv[1])
+key = sys.argv[2]
+if not path.is_file():
+    raise SystemExit(1)
+for raw_line in path.read_text(encoding="utf-8").splitlines():
+    line = raw_line.strip()
+    if not line or line.startswith("#"):
+        continue
+    if line.startswith("export "):
+        line = line[7:]
+    if "=" not in line:
+        continue
+    current_key, value = line.split("=", 1)
+    if current_key.strip() == key:
+        print(parse_env_value(value))
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
 }
 
 export_if_set() {
@@ -203,6 +287,9 @@ RSYNC_SSH="ssh -p ${SSH_PORT} -o BatchMode=yes -o StrictHostKeyChecking=accept-n
 SSH_BASE=(ssh -p "${SSH_PORT}" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10)
 SSH_TARGET="${REMOTE_USER}@${REMOTE_HOST}"
 REMOTE_TARGET="${SSH_TARGET}"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(printf '%s' "$(basename "${REMOTE_DIR}")" | tr '[:upper:]' '[:lower:]')}"
+REMOTE_STATE_FILE="${REMOTE_DIR}/${STATE_FILE_NAME}"
+REMOTE_POSTGRES_VOLUME="${COMPOSE_PROJECT_NAME}_postgres-data"
 
 mkdir -p "${BACKUP_ROOT}"
 
@@ -232,10 +319,33 @@ if [[ -n "${ENV_BACKUP_PATH}" ]]; then
   log "Backed up existing env file: ${ENV_BACKUP_PATH}"
 fi
 
+STATE_BACKUP_PATH="$(backup_file "${STATE_FILE_PATH}" "deploy-secrets.env" || true)"
+if [[ -n "${STATE_BACKUP_PATH}" ]]; then
+  log "Backed up existing deploy secrets file: ${STATE_BACKUP_PATH}"
+fi
+
+log "Fetching remote deployment state if present"
+if sync_remote_file_to_local_if_exists "${REMOTE_STATE_FILE}" "${STATE_FILE_PATH}"; then
+  log "Fetched remote deploy secrets: ${REMOTE_STATE_FILE}"
+fi
+if sync_remote_file_to_local_if_exists "${REMOTE_DIR}/${ENV_FILE_NAME}" "${ENV_FILE_PATH}"; then
+  log "Fetched remote env file: ${REMOTE_DIR}/${ENV_FILE_NAME}"
+fi
+
+if [[ ! -f "${STATE_FILE_PATH}" ]]; then
+  existing_postgres_password="$(read_env_value "${ENV_FILE_PATH}" "POSTGRES_PASSWORD" || true)"
+  if [[ -n "${existing_postgres_password}" && "${existing_postgres_password}" != "change-me-db-password" ]]; then
+    :
+  elif remote_volume_exists "${REMOTE_POSTGRES_VOLUME}"; then
+    die "Existing PostgreSQL volume detected on the remote host but no deploy secrets file is available. Refusing to auto-generate a new POSTGRES_PASSWORD because that would break the current database. Restore ${STATE_FILE_NAME} or supply the original password before redeploying."
+  fi
+fi
+
 log "Rendering deployment env file"
 "${PYTHON_BIN}" "${ROOT_DIR}/scripts/render_docker_env.py" \
   --template "${ENV_TEMPLATE}" \
   --existing "${ENV_FILE_PATH}" \
+  --state "${STATE_FILE_PATH}" \
   --output "${ENV_FILE_PATH}" \
   --https-port "${HTTPS_PORT}" \
   --public-origin "$(public_origin)"
@@ -286,7 +396,7 @@ done
 log "Ensuring remote directories exist"
 "${SSH_BASE[@]}" "${SSH_TARGET}" "REMOTE_DIR=$(shell_quote "${REMOTE_DIR}") bash -s" <<'EOF'
 set -euo pipefail
-mkdir -p "${REMOTE_DIR}/deploy/nginx/certs"
+mkdir -p "${REMOTE_DIR}/.runtime" "${REMOTE_DIR}/deploy/nginx/certs"
 EOF
 
 log "Syncing project to ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_DIR}"
@@ -314,6 +424,11 @@ sync_path_to_remote "${NGINX_CONF_PATH}" "${REMOTE_DIR}/deploy/nginx/"
 
 log "Syncing generated env file"
 sync_path_to_remote "${ENV_FILE_PATH}" "${REMOTE_DIR}/"
+
+if [[ -f "${STATE_FILE_PATH}" ]]; then
+  log "Syncing deploy secrets state"
+  sync_path_to_remote "${STATE_FILE_PATH}" "${REMOTE_DIR}/.runtime/"
+fi
 
 log "Syncing generated certificates"
 rsync -az --delete -e "${RSYNC_SSH}" "${CERT_DIR}/" "${REMOTE_TARGET}:${REMOTE_DIR}/deploy/nginx/certs/"

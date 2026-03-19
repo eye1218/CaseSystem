@@ -85,6 +85,8 @@ PUBLIC_HOST=casesystem.example.com \
 - `POSTGRES_PASSWORD` 和 `CASESYSTEM_JWT_SECRET_KEY` 未提供时会自动生成
 - `CASESYSTEM_SMTP_PASSWORD` 不会自动生成
 - 如果保留了示例里的 SMTP 配置，但没提供 `CASESYSTEM_SMTP_PASSWORD`，脚本会直接失败
+- 自动生成的数据库/JWT 密码会持久化到 `.runtime/deploy-secrets.env`
+- 如果远端已经存在 PostgreSQL 数据卷，脚本会优先复用该状态文件；状态文件丢失且数据卷已存在时会拒绝继续，避免数据库密码与应用连接串失配
 - 全过程不会等待人工输入
 
 ## Redis 用途

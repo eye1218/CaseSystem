@@ -40,6 +40,23 @@ wait_for_healthy() {
   die "${service} did not become healthy in time"
 }
 
+sync_postgres_password() {
+  # Keep the role password aligned with current env file even when the postgres volume already exists.
+  docker compose --env-file "${ENV_FILE}" exec -T postgres sh -s <<'EOF'
+set -euo pipefail
+
+if [ -z "${POSTGRES_USER:-}" ] || [ -z "${POSTGRES_PASSWORD:-}" ]; then
+  echo "POSTGRES_USER and POSTGRES_PASSWORD must be set in postgres container" >&2
+  exit 1
+fi
+
+psql -v ON_ERROR_STOP=1 \
+  -U "${POSTGRES_USER}" \
+  -d postgres \
+  -c "ALTER ROLE CURRENT_USER WITH PASSWORD '$(printf "%s" "${POSTGRES_PASSWORD}" | sed "s/'/''/g")';"
+EOF
+}
+
 smoke_https() {
   local python_bin=""
   python_bin="$(command -v python3 || command -v python || true)"
@@ -98,6 +115,10 @@ main() {
 
   log "Starting postgres and redis"
   docker compose --env-file "${ENV_FILE}" up -d postgres redis
+  wait_for_healthy postgres
+
+  log "Synchronizing postgres role password"
+  sync_postgres_password
 
   log "Running bootstrap"
   docker compose --env-file "${ENV_FILE}" --profile init run --rm bootstrap

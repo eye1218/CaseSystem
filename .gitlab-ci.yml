@@ -7,6 +7,7 @@ variables:
   PROD_DIR: "/opt/casesystem"
   ENV_FILE: ".env.docker"
   APP_PORT: "8010"
+  HTTPS_PORT: "443"
   GIT_STRATEGY: none
 
 deploy_test_dev:
@@ -71,12 +72,55 @@ deploy_prod_tag:
   tags:
     - prod-deploy
   rules:
-    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_COMMIT_TAG && $CI_COMMIT_REF_PROTECTED == "true"'
   environment:
     name: production
-    url: "http://10.20.100.42:8010"
+    url: "https://${PUBLIC_HOST}:${HTTPS_PORT}"
   script:
     - set -eu
+    - |
+      require_var() {
+        value="$(printenv "$1" 2>/dev/null || true)"
+        if [ -z "${value}" ]; then
+          echo "Missing required GitLab CI/CD variable: $1" >&2
+          exit 1
+        fi
+      }
+      validate_host_token() {
+        case "$1" in
+          ""|*[!A-Za-z0-9.-]*)
+            return 1
+            ;;
+          *)
+            return 0
+            ;;
+        esac
+      }
+      require_var PUBLIC_HOST
+      require_var POSTGRES_USER
+      require_var POSTGRES_DB
+      require_var POSTGRES_PASSWORD
+      require_var CASESYSTEM_JWT_SECRET_KEY
+      require_var CASESYSTEM_SMTP_HOST
+      require_var CASESYSTEM_SMTP_PORT
+      require_var CASESYSTEM_SMTP_USERNAME
+      require_var CASESYSTEM_SMTP_PASSWORD
+      require_var CASESYSTEM_SMTP_FROM_EMAIL
+      require_var CASESYSTEM_SMTP_USE_SSL
+      require_var CASESYSTEM_SMTP_STARTTLS
+      if ! validate_host_token "${PUBLIC_HOST}"; then
+        echo "PUBLIC_HOST must be a hostname or IPv4 address without scheme or port" >&2
+        exit 1
+      fi
+      if [ -n "${HTTPS_PORT}" ] && ! printf '%s' "${HTTPS_PORT}" | grep -Eq '^[0-9]+$'; then
+        echo "HTTPS_PORT must be numeric" >&2
+        exit 1
+      fi
+      HTTPS_PORT="${HTTPS_PORT:-443}"
+      PUBLIC_ORIGIN="https://${PUBLIC_HOST}"
+      if [ "${HTTPS_PORT}" != "443" ]; then
+        PUBLIC_ORIGIN="https://${PUBLIC_HOST}:${HTTPS_PORT}"
+      fi
     - TARGET_DIR="${PROD_DIR}"
     - mkdir -p "${TARGET_DIR}"
     - cd "${TARGET_DIR}"
@@ -90,12 +134,6 @@ deploy_prod_tag:
       else
         git remote add origin "${REPO_SSH_URL}"
       fi
-    - ENV_BACKUP=""
-    - |
-      if [ -f "${ENV_FILE}" ]; then
-        ENV_BACKUP="$(mktemp)"
-        cp "${ENV_FILE}" "${ENV_BACKUP}"
-      fi
     - git fetch --prune --tags origin
     - git fetch origin main
     - |
@@ -105,27 +143,23 @@ deploy_prod_tag:
       fi
     - git checkout -f "tags/${CI_COMMIT_TAG}"
     - git clean -fd -e "${ENV_FILE}"
+    - TMP_ENV_INPUT="$(mktemp)"
+    - trap 'rm -f "${TMP_ENV_INPUT}"' EXIT
     - |
-      if [ ! -f "${ENV_FILE}" ]; then
-        echo "Missing ${ENV_FILE} in ${TARGET_DIR}. Please provision environment file on the runner host."
-        exit 1
+      : > "${TMP_ENV_INPUT}"
+      python3 scripts/render_docker_env.py \
+        --template "${ENV_FILE}.example" \
+        --existing "${TMP_ENV_INPUT}" \
+        --output "${ENV_FILE}" \
+        --https-port "${HTTPS_PORT}" \
+        --public-origin "${PUBLIC_ORIGIN}" \
+        --strict
+    - |
+      set --
+      if printf '%s' "${PUBLIC_HOST}" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
+        set -- --cert-dir deploy/nginx/certs --cn "${PUBLIC_HOST}" --ip "${PUBLIC_HOST}" --dns localhost --ip 127.0.0.1
+      else
+        set -- --cert-dir deploy/nginx/certs --cn "${PUBLIC_HOST}" --dns "${PUBLIC_HOST}" --dns localhost --ip 127.0.0.1
       fi
-    - |
-      if [ -n "${ENV_BACKUP}" ] && [ -f "${ENV_BACKUP}" ]; then
-        cp "${ENV_BACKUP}" "${ENV_FILE}"
-        rm -f "${ENV_BACKUP}"
-      fi
-    - docker compose --env-file "${ENV_FILE}" build
-    - docker compose --env-file "${ENV_FILE}" up -d postgres redis
-    - docker compose --env-file "${ENV_FILE}" --profile init run --rm bootstrap
-    - docker compose --env-file "${ENV_FILE}" up -d api worker beat
-    - docker compose --env-file "${ENV_FILE}" ps
-    - |
-      for _ in $(seq 1 20); do
-        if curl -fsS "http://127.0.0.1:${APP_PORT}/healthz"; then
-          exit 0
-        fi
-        sleep 1
-      done
-      echo "Health check failed on production environment"
-      exit 1
+      ./scripts/gen_self_signed_cert.sh "$@"
+    - REMOTE_DIR="${TARGET_DIR}" ENV_FILE="${ENV_FILE}" HTTPS_PORT="${HTTPS_PORT}" bash scripts/deploy_tls_remote.sh
